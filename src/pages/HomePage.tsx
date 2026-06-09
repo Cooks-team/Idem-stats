@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { absoluteAvatar, api } from '../api/client';
-import type { LeaderboardEntry } from '../api/types';
+import type { FriendshipRow, LeaderboardEntry } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { Shell } from '../ui/Shell';
 import { Avatar } from '../ui/Avatar';
@@ -79,6 +79,9 @@ export function HomePage() {
             </div>
           )}
 
+          {/* Amis — duels rapides */}
+          <FriendsQuickStrip />
+
           {/* Le reste */}
           <div style={{ marginTop: 28 }}>
             <div className="eyebrow"><span className="label">Le reste de la meute</span></div>
@@ -105,6 +108,50 @@ function RankNum({ n, size = 18 }: { n: number; size?: number }) {
       fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: size,
       color, minWidth: 28, textAlign: 'center', display: 'inline-block',
     }}>{n}</span>
+  );
+}
+
+// Bandeau "Mes amis" sur la home avec un bouton Shifumi distance par ami.
+function FriendsQuickStrip() {
+  const nav = useNavigate();
+  const { data } = useQuery({
+    queryKey: ['friends'],
+    queryFn: () => api.listFriends(),
+    refetchInterval: 10_000,
+  });
+  const friends = data?.friends ?? [];
+  const hasIncoming = (data?.incoming.length ?? 0) > 0;
+
+  return (
+    <div style={{ marginTop: 28 }}>
+      <div className="eyebrow">
+        <span className="label">Mes amis · duels rapides</span>
+        <button className="btn btn-line btn-sm" onClick={() => nav('/friends')}>
+          {hasIncoming ? `Voir mes amis (${data!.incoming.length} demande${data!.incoming.length > 1 ? 's' : ''})` : 'Gérer mes amis'}
+        </button>
+      </div>
+      {friends.length === 0 ? (
+        <div className="panel" style={{ color: 'var(--muted)', textAlign: 'center' }}>
+          Pas encore d'amis. <button className="btn btn-accent btn-sm" style={{ marginLeft: 12 }} onClick={() => nav('/friends')}>Ajouter</button>
+        </div>
+      ) : (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
+          {friends.map((f) => <FriendCard key={f.id} row={f} onShifumi={(pseudo) => nav(`/matches/new?game=shifumi&mode=remote&opponent=${encodeURIComponent(pseudo)}`)} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function FriendCard({ row, onShifumi }: { row: FriendshipRow; onShifumi: (pseudo: string) => void }) {
+  return (
+    <div className="panel" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12 }}>
+      <Avatar seed={row.user.pseudo} size={40} imageUrl={absoluteAvatar(row.user.avatarUrl)} />
+      <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+        <div style={{ fontWeight: 700 }}>{row.user.pseudo}</div>
+      </div>
+      <button className="btn btn-accent btn-sm" onClick={() => onShifumi(row.user.pseudo)} title="Shifumi à distance">🪨 Shifumi</button>
+    </div>
   );
 }
 

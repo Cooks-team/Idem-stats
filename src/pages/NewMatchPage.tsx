@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import { SHIFUMI_EMOJIS, SHIFUMI_LABELS, SHIFUMI_LOSES_TO, SHIFUMI_PICKS, type ShifumiPick } from '../api/types';
@@ -10,15 +10,33 @@ import { Icon } from '../ui/Icon';
 import { KNOWN_GAMES } from '../games/registry';
 
 type Mode = 'create' | 'join';
+type ShifumiMode = 'irl' | 'remote';
 
 export function NewMatchPage() {
   const nav = useNavigate();
   const qc = useQueryClient();
+  const [params] = useSearchParams();
   const [mode, setMode] = useState<Mode>('create');
-  const [game, setGame] = useState(KNOWN_GAMES[0].apiId);
-  const [opponent, setOpponent] = useState('');
+  const [game, setGame] = useState(params.get('game') ?? KNOWN_GAMES[0].apiId);
+  const [opponent, setOpponent] = useState(params.get('opponent') ?? '');
   const [code, setCode] = useState('');
   const [error, setError] = useState<string | null>(null);
+  // Pour shifumi : IRL = saisir le résultat sur place / Distance = picks cachés + reveal "Shi-fu-mi"
+  const [shifumiMode, setShifumiMode] = useState<ShifumiMode>(
+    (params.get('mode') as ShifumiMode) ?? 'irl',
+  );
+
+  // /matches/new?game=shifumi&mode=remote&opponent=... → si l'URL spécifie un mode, on s'aligne
+  useEffect(() => {
+    const m = params.get('mode');
+    if (m === 'irl' || m === 'remote') setShifumiMode(m);
+    const g = params.get('game');
+    if (g) setGame(g);
+    const o = params.get('opponent');
+    if (o) setOpponent(o);
+    // une seule fois au mount, params est mémoïsé par le router
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const createMut = useMutation({
     mutationFn: () => api.createMatch(game, opponent.trim() || undefined),
@@ -67,13 +85,36 @@ export function NewMatchPage() {
                 ))}
               </div>
               {isShifumi ? (
-                <ShifumiForm
-                  opponent={opponent}
-                  setOpponent={setOpponent}
-                  onSuccess={(m) => { qc.invalidateQueries({ queryKey: ['matches'] }); qc.invalidateQueries({ queryKey: ['leaderboard'] }); nav(`/matches/${m.id}`); }}
-                  setError={setError}
-                  error={error}
-                />
+                <>
+                  <div className="eyebrow" style={{ marginTop: 4 }}>
+                    <span className="label">Mode de duel</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button className={`chip ${shifumiMode === 'irl' ? 'active accent' : ''}`} onClick={() => setShifumiMode('irl')}>
+                      🤝 IRL — saisir le résultat
+                    </button>
+                    <button className={`chip ${shifumiMode === 'remote' ? 'active accent' : ''}`} onClick={() => setShifumiMode('remote')}>
+                      🛰️ Distance — Shi-fu-mi
+                    </button>
+                  </div>
+                  {shifumiMode === 'irl' ? (
+                    <ShifumiForm
+                      opponent={opponent}
+                      setOpponent={setOpponent}
+                      onSuccess={(m) => { qc.invalidateQueries({ queryKey: ['matches'] }); qc.invalidateQueries({ queryKey: ['leaderboard'] }); nav(`/matches/${m.id}`); }}
+                      setError={setError}
+                      error={error}
+                    />
+                  ) : (
+                    <ShifumiRemoteForm
+                      opponent={opponent}
+                      setOpponent={setOpponent}
+                      onSuccess={(m) => { qc.invalidateQueries({ queryKey: ['matches'] }); nav(`/matches/${m.id}`); }}
+                      setError={setError}
+                      error={error}
+                    />
+                  )}
+                </>
               ) : (
                 <>
                   <Field
@@ -202,6 +243,49 @@ function ShifumiForm({
         onClick={() => submitMut.mutate()}
       >
         {submitMut.isPending ? '…' : 'Enregistrer le duel'}
+      </button>
+    </>
+  );
+}
+
+// Distance : on commit son pick (secret) côté serveur, l'opponent fera sa pioche depuis son détail.
+function ShifumiRemoteForm({
+  opponent, setOpponent, onSuccess, setError, error,
+}: {
+  opponent: string;
+  setOpponent: (v: string) => void;
+  onSuccess: (m: import('../api/types').Match) => void;
+  setError: (s: string | null) => void;
+  error: string | null;
+}) {
+  const [myPick, setMyPick] = useState<ShifumiPick | null>(null);
+  const mut = useMutation({
+    mutationFn: () => {
+      if (!myPick) throw new Error('missing_pick');
+      if (opponent.trim().length < 3) throw new Error('opponent_required');
+      return api.createShifumiRemote(opponent.trim(), myPick);
+    },
+    onSuccess,
+    onError: (e) => setError(humanize(e)),
+  });
+  return (
+    <>
+      <Field
+        label="Adversaire"
+        placeholder="pseudo (compte existant)"
+        value={opponent}
+        onChange={(e) => setOpponent(e.target.value)}
+      />
+      <div className="eyebrow"><span className="label">Ton choix (secret jusqu'au reveal)</span></div>
+      <PickRow value={myPick} onChange={setMyPick} />
+      {error && <div style={{ color: 'var(--loss)', fontSize: 13 }}>{error}</div>}
+      <button
+        className="btn btn-accent btn-lg btn-full"
+        style={{ marginTop: 12 }}
+        disabled={!myPick || opponent.trim().length < 3 || mut.isPending}
+        onClick={() => mut.mutate()}
+      >
+        {mut.isPending ? '…' : 'Lancer le défi'}
       </button>
     </>
   );

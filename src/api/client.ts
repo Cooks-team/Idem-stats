@@ -1,5 +1,5 @@
 // Mince wrapper fetch : ajoute Bearer si dispo, sérialise JSON, jette une ApiError typée.
-import type { AuthResponse, LeaderboardEntry, Match, MatchSource, ShifumiPick, User } from './types';
+import type { AuthResponse, FriendsResponse, FriendshipRow, LeaderboardEntry, Match, MatchSource, ShifumiPick, User } from './types';
 
 const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 export const API_BASE_URL = BASE;
@@ -80,9 +80,27 @@ export const api = {
       body: JSON.stringify({
         game: 'shifumi',
         opponentPseudo,
-        shifumi: { winnerPseudo, winnerPick, loserPick },
+        shifumi: { mode: 'irl', winnerPseudo, winnerPick, loserPick },
       }),
     }),
+  createShifumiRemote: (opponentPseudo: string, myPick: ShifumiPick) =>
+    call<Match>('/matches', {
+      method: 'POST',
+      body: JSON.stringify({
+        game: 'shifumi',
+        opponentPseudo,
+        shifumi: { mode: 'remote', myPick },
+      }),
+    }),
+  shifumiPick: (matchId: string, pick: ShifumiPick) =>
+    call<Match>(`/matches/${matchId}/shifumi-pick`, { method: 'POST', body: JSON.stringify({ pick }) }),
+
+  // Friends
+  listFriends: () => call<FriendsResponse>('/friends'),
+  sendFriendRequest: (pseudo: string) =>
+    call<FriendshipRow>('/friends', { method: 'POST', body: JSON.stringify({ pseudo }) }),
+  acceptFriend: (requestId: string) => call<FriendshipRow>(`/friends/${requestId}/accept`, { method: 'POST' }),
+  removeFriend: (requestId: string) => call<void>(`/friends/${requestId}`, { method: 'DELETE' }),
   joinMatch: (code: string) =>
     call<Match>('/matches/join', { method: 'POST', body: JSON.stringify({ code }) }),
   patchScore: (id: string, scoreP1: number, scoreP2: number, source: MatchSource) =>

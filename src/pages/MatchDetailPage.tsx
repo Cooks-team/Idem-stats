@@ -1,10 +1,13 @@
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { absoluteAvatar, api } from '../api/client';
 import { Shell } from '../ui/Shell';
 import { Avatar } from '../ui/Avatar';
 import { displayGame } from '../games/registry';
-import type { Match } from '../api/types';
+import type { Match, ShifumiMetadata, ShifumiPick } from '../api/types';
+import { SHIFUMI_EMOJIS, SHIFUMI_LABELS, SHIFUMI_PICKS } from '../api/types';
+import { useAuth } from '../auth/AuthContext';
 
 export function MatchDetailPage() {
   const { id = '' } = useParams();
@@ -55,11 +58,11 @@ export function MatchDetailPage() {
     );
   }
 
-  // Shifumi : layout dédié, pas de polling ni d'édition de score (1 manche déjà résolue).
+  // Shifumi : layout dédié. En remote pending → pioche secrète, en finished → reveal animé.
   if (m.game === 'shifumi') {
     return (
       <Shell title={displayGame(m.game)} onBack={() => nav(-1)} action={<StatusBadge status={m.status} />}>
-        <ShifumiResult match={m} />
+        <ShifumiView match={m} />
       </Shell>
     );
   }
@@ -134,44 +137,146 @@ function PlayerSide({ pseudo, tone, score, editable, onPlus, onMinus, avatarUrl 
   );
 }
 
-// Affichage d'un duel shifumi terminé : pseudos + emojis des picks + raison ("X bat Y").
-function ShifumiResult({ match: m }: { match: Match }) {
-  const meta = (m.metadata ?? null) as import('../api/types').ShifumiMetadata | null;
-  if (!meta) {
-    return <div className="panel" style={{ color: 'var(--muted)', textAlign: 'center' }}>Détails du duel manquants.</div>;
+// Dispatcher shifumi : remote pending → pioche/wait, finished → reveal (animé en remote).
+function ShifumiView({ match: m }: { match: Match }) {
+  const meta = (m.metadata ?? {}) as ShifumiMetadata;
+  if (m.status === 'pending' && meta.mode === 'remote') return <ShifumiRemotePending match={m} />;
+  if (m.status === 'finished') return <ShifumiResult match={m} animate={meta.mode === 'remote'} />;
+  return <div className="panel" style={{ color: 'var(--muted)', textAlign: 'center' }}>État inattendu pour un shifumi.</div>;
+}
+
+function ShifumiRemotePending({ match: m }: { match: Match }) {
+  const meta = (m.metadata ?? {}) as ShifumiMetadata;
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const isCreator = m.player1Id === user?.id;
+
+  const pickMut = useMutation({
+    mutationFn: (p: ShifumiPick) => api.shifumiPick(m.id, p),
+    onSuccess: (updated) => qc.setQueryData(['match', m.id], updated),
+  });
+  const [chosen, setChosen] = useState<ShifumiPick | null>(null);
+
+  // Creator : son pick lui est renvoyé par l'API (creatorPick visible côté lui).
+  if (isCreator) {
+    return (
+      <div className="panel" style={{ padding: 40, textAlign: 'center' }}>
+        <div style={{ color: 'var(--muted)', fontSize: 13 }}>Ton choix (secret)</div>
+        <div style={{ fontSize: 96, lineHeight: 1, marginTop: 6 }}>{meta.creatorPick ? SHIFUMI_EMOJIS[meta.creatorPick] : '🤐'}</div>
+        <div style={{ marginTop: 16, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 24 }}>
+          En attente de {m.player2?.pseudo ?? 'l\'adversaire'}…
+        </div>
+        <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 6 }}>
+          On rafraîchit toutes les 2 secondes. Tu seras notifié quand il/elle aura répondu.
+        </div>
+      </div>
+    );
   }
-  const E = {
-    rock: '🪨',
-    paper: '📄',
-    scissors: '✂️',
-  } as const;
-  const L = { rock: 'Pierre', paper: 'Papier', scissors: 'Ciseaux' } as const;
-  const reason = `${L[meta.winnerPick]} bat ${L[meta.loserPick]}`;
+
+  // Opponent : doit choisir, son choix déclenche le reveal.
+  return (
+    <div className="panel" style={{ padding: 40, textAlign: 'center' }}>
+      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 26 }}>
+        {m.player1?.pseudo ?? 'L\'adversaire'} te défie au Shifumi
+      </div>
+      <p style={{ color: 'var(--muted)', marginTop: 6 }}>Choisis ta main. Le reveal se déclenchera dès que tu valides.</p>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginTop: 18 }}>
+        {SHIFUMI_PICKS.map((p) => (
+          <button
+            key={p}
+            onClick={() => setChosen(p)}
+            style={{
+              padding: 20, borderRadius: 16,
+              border: `2px solid ${chosen === p ? 'var(--accent)' : 'var(--line)'}`,
+              background: chosen === p ? 'color-mix(in srgb, var(--accent) 18%, var(--surface))' : 'var(--surface)',
+              color: 'var(--text)', cursor: 'pointer',
+            }}
+          >
+            <div style={{ fontSize: 48, lineHeight: 1 }}>{SHIFUMI_EMOJIS[p]}</div>
+            <div style={{ fontSize: 14, fontWeight: 700, marginTop: 6 }}>{SHIFUMI_LABELS[p]}</div>
+          </button>
+        ))}
+      </div>
+      <button
+        className="btn btn-accent btn-lg"
+        style={{ marginTop: 20 }}
+        disabled={!chosen || pickMut.isPending}
+        onClick={() => chosen && pickMut.mutate(chosen)}
+      >
+        {pickMut.isPending ? 'Reveal en cours…' : '🪨📄✂️ Valider et révéler'}
+      </button>
+    </div>
+  );
+}
+
+// Reveal : si animate=true, on joue le countdown "Shi-fu-mi" avant d'afficher les mains.
+function ShifumiResult({ match: m, animate }: { match: Match; animate: boolean }) {
+  const meta = (m.metadata ?? {}) as ShifumiMetadata;
+  // Cherche les deux picks. Pour une remote, on a creatorPick + opponentPick.
+  // Pour une IRL, on a winnerPick + loserPick.
+  const p1Pick: ShifumiPick | undefined = (meta.creatorPick as ShifumiPick | undefined)
+    ?? (meta.winnerPseudo === m.player1?.pseudo ? meta.winnerPick : meta.loserPick);
+  const p2Pick: ShifumiPick | undefined = (meta.opponentPick as ShifumiPick | undefined)
+    ?? (meta.winnerPseudo === m.player2?.pseudo ? meta.winnerPick : meta.loserPick);
+
+  // Animation "Shi-fu-mi" — 3 mots successifs (300ms chacun), puis reveal.
+  const [phase, setPhase] = useState<0 | 1 | 2 | 3>(animate ? 0 : 3);
+  useEffect(() => {
+    if (!animate) return;
+    const t1 = setTimeout(() => setPhase(1), 350);
+    const t2 = setTimeout(() => setPhase(2), 700);
+    const t3 = setTimeout(() => setPhase(3), 1050);
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
+  }, [animate]);
+
+  if (animate && phase < 3) {
+    const words = ['SHI', 'FU', 'MI'];
+    return (
+      <div className="panel" style={{ padding: 60, textAlign: 'center', minHeight: 320 }}>
+        <div style={{ color: 'var(--muted)' }}>Reveal dans…</div>
+        <div style={{
+          marginTop: 12, fontFamily: 'var(--font-display)', fontWeight: 700,
+          fontSize: 140, color: 'var(--accent)', letterSpacing: 8,
+          animation: 'pulse 0.35s ease-in-out',
+        }}>{words[phase]}</div>
+        <style>{`@keyframes pulse { 0%{transform:scale(0.6);opacity:0} 50%{transform:scale(1.15);opacity:1} 100%{transform:scale(1);opacity:1} }`}</style>
+      </div>
+    );
+  }
+
+  const winnerPseudo = meta.winnerPseudo;
+  const reason = (meta.winnerPick && meta.loserPick)
+    ? `${SHIFUMI_LABELS[meta.winnerPick]} bat ${SHIFUMI_LABELS[meta.loserPick]}`
+    : meta.tie ? 'Égalité' : '';
+
   return (
     <div className="panel" style={{ padding: '40px 30px', textAlign: 'center' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 24 }}>
-        <PickColumn pseudo={meta.winnerPseudo} emoji={E[meta.winnerPick]} label={L[meta.winnerPick]} won />
+        <PickColumn pseudo={m.player1?.pseudo ?? 'P1'} pick={p1Pick} won={winnerPseudo === m.player1?.pseudo} />
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 36, color: 'var(--muted)' }}>vs</div>
-        <PickColumn pseudo={meta.loserPseudo} emoji={E[meta.loserPick]} label={L[meta.loserPick]} won={false} />
+        <PickColumn pseudo={m.player2?.pseudo ?? 'P2'} pick={p2Pick} won={winnerPseudo === m.player2?.pseudo} />
       </div>
       <div style={{
         marginTop: 28, display: 'inline-block',
         padding: '10px 18px', borderRadius: 999,
-        background: 'color-mix(in srgb, var(--win) 16%, transparent)',
-        color: 'var(--win)', fontWeight: 700, fontSize: 14,
+        background: meta.tie
+          ? 'color-mix(in srgb, var(--muted) 16%, transparent)'
+          : 'color-mix(in srgb, var(--win) 16%, transparent)',
+        color: meta.tie ? 'var(--muted)' : 'var(--win)',
+        fontWeight: 700, fontSize: 14,
       }}>
-        🏆 {meta.winnerPseudo} gagne — {reason}
+        {meta.tie ? '⚖️ Match nul' : `🏆 ${winnerPseudo} gagne — ${reason}`}
       </div>
     </div>
   );
 }
 
-function PickColumn({ pseudo, emoji, label, won }: { pseudo: string; emoji: string; label: string; won: boolean }) {
+function PickColumn({ pseudo, pick, won }: { pseudo: string; pick?: ShifumiPick; won: boolean }) {
   return (
     <div style={{ opacity: won ? 1 : 0.55 }}>
-      <div style={{ fontSize: 96, lineHeight: 1 }}>{emoji}</div>
+      <div style={{ fontSize: 96, lineHeight: 1 }}>{pick ? SHIFUMI_EMOJIS[pick] : '❔'}</div>
       <div style={{ fontWeight: 700, marginTop: 8 }}>{pseudo}</div>
-      <div style={{ color: 'var(--muted)', fontSize: 13 }}>{label}</div>
+      <div style={{ color: 'var(--muted)', fontSize: 13 }}>{pick ? SHIFUMI_LABELS[pick] : '—'}</div>
     </div>
   );
 }
