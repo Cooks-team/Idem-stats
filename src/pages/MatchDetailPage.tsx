@@ -41,7 +41,19 @@ export function MatchDetailPage() {
   const bumpP1 = (d: number) => patchMut.mutate({ p1: Math.max(0, m.scoreP1 + d), p2: m.scoreP2 });
   const bumpP2 = (d: number) => patchMut.mutate({ p1: m.scoreP1, p2: Math.max(0, m.scoreP2 + d) });
 
-  if (m.status === 'pending') {
+  // Match pending : 3 cas distincts
+  //   - shifumi remote → géré plus bas par ShifumiView
+  //   - invitation (player2Id set, metadata.invite=true) → bloc accept/decline
+  //   - code à partager (player2Id null) → bloc code
+  if (m.status === 'pending' && m.game !== 'shifumi') {
+    const isInvitation = m.player2Id != null && (m.metadata as Record<string, unknown> | null)?.invite === true;
+    if (isInvitation) {
+      return (
+        <Shell title={displayGame(m.game)} onBack={() => nav(-1)} action={<StatusBadge status={m.status} />}>
+          <InvitationBlock match={m} />
+        </Shell>
+      );
+    }
     return (
       <Shell title={displayGame(m.game)} onBack={() => nav(-1)} action={<StatusBadge status={m.status} />}>
         <div className="panel" style={{ textAlign: 'center', padding: 50 }}>
@@ -133,6 +145,61 @@ function PlayerSide({ pseudo, tone, score, editable, onPlus, onMinus, avatarUrl 
           <button className="btn btn-accent btn-sm" onClick={onPlus}>+1</button>
         </div>
       )}
+    </div>
+  );
+}
+
+// Invitation à un duel — côté créateur "en attente", côté invité Accept/Decline.
+function InvitationBlock({ match: m }: { match: Match }) {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  const isCreator = m.player1Id === user?.id;
+  const acceptMut = useMutation({
+    mutationFn: () => api.acceptInvitation(m.id),
+    onSuccess: (updated) => qc.setQueryData(['match', m.id], updated),
+  });
+  const declineMut = useMutation({
+    mutationFn: () => api.declineInvitation(m.id),
+    onSuccess: (updated) => qc.setQueryData(['match', m.id], updated),
+  });
+
+  if (isCreator) {
+    return (
+      <div className="panel" style={{ padding: 40, textAlign: 'center' }}>
+        <div style={{ fontSize: 72 }}>📨</div>
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 26, marginTop: 8 }}>
+          Invitation envoyée à {m.player2?.pseudo}
+        </div>
+        <p style={{ color: 'var(--muted)', marginTop: 6 }}>
+          On rafraîchit toutes les 2s. La partie démarrera dès qu'il/elle accepte.
+        </p>
+        <button
+          className="btn btn-line"
+          style={{ marginTop: 16 }}
+          onClick={() => declineMut.mutate()}
+          disabled={declineMut.isPending}
+        >Annuler l'invitation</button>
+      </div>
+    );
+  }
+  return (
+    <div className="panel" style={{ padding: 40, textAlign: 'center' }}>
+      <div style={{ fontSize: 72 }}>⚔️</div>
+      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 26, marginTop: 8 }}>
+        {m.player1?.pseudo} te défie au {displayGame(m.game)}
+      </div>
+      <div style={{ display: 'flex', gap: 10, justifyContent: 'center', marginTop: 20 }}>
+        <button
+          className="btn btn-accent btn-lg"
+          onClick={() => acceptMut.mutate()}
+          disabled={acceptMut.isPending || declineMut.isPending}
+        >{acceptMut.isPending ? '…' : '✓ Accepter'}</button>
+        <button
+          className="btn btn-line btn-lg"
+          onClick={() => declineMut.mutate()}
+          disabled={acceptMut.isPending || declineMut.isPending}
+        >Refuser</button>
+      </div>
     </div>
   );
 }

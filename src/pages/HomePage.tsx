@@ -136,7 +136,8 @@ function FriendsQuickStrip() {
         </div>
       ) : (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 10 }}>
-          {friends.map((f) => <FriendCard key={f.id} row={f} onShifumi={(pseudo) => nav(`/matches/new?game=shifumi&mode=remote&opponent=${encodeURIComponent(pseudo)}`)} />)}
+          {/* Duel rapide : on pré-remplit juste l'opponent + duelMode=remote, l'utilisateur choisit le jeu */}
+          {friends.map((f) => <FriendCard key={f.id} row={f} onShifumi={(pseudo) => nav(`/matches/new?opponent=${encodeURIComponent(pseudo)}&duelMode=remote`)} />)}
         </div>
       )}
     </div>
@@ -144,13 +145,15 @@ function FriendsQuickStrip() {
 }
 
 function FriendCard({ row, onShifumi }: { row: FriendshipRow; onShifumi: (pseudo: string) => void }) {
+  // "Duel rapide" = ouvre NewMatchPage avec l'ami pré-rempli et le mode invitation,
+  // mais SANS jeu présélectionné — l'utilisateur choisit parmi tous ceux dispo.
   return (
     <div className="panel" style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12 }}>
       <Avatar seed={row.user.pseudo} size={40} imageUrl={absoluteAvatar(row.user.avatarUrl)} />
       <div style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         <div style={{ fontWeight: 700 }}>{row.user.pseudo}</div>
       </div>
-      <button className="btn btn-accent btn-sm" onClick={() => onShifumi(row.user.pseudo)} title="Shifumi à distance">🪨 Shifumi</button>
+      <button className="btn btn-accent btn-sm" onClick={() => onShifumi(row.user.pseudo)} title="Choisis un jeu et invite cet ami">⚔️ Duel rapide</button>
     </div>
   );
 }

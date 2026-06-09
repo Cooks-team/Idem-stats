@@ -84,8 +84,8 @@ export function FriendsPage() {
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button
                       className="btn btn-ghost btn-sm"
-                      onClick={() => nav(`/matches/new?game=shifumi&mode=remote&opponent=${encodeURIComponent(r.user.pseudo)}`)}
-                    >🪨 Shifumi distance</button>
+                      onClick={() => nav(`/matches/new?opponent=${encodeURIComponent(r.user.pseudo)}&duelMode=remote`)}
+                    >⚔️ Duel rapide</button>
                     <button
                       className="btn btn-line btn-sm"
                       onClick={() => removeMut.mutate(r.id)}

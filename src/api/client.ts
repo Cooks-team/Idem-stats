@@ -72,8 +72,10 @@ export const api = {
   listMatches: (scope: 'me' | 'all' = 'me', game?: string) =>
     call<Match[]>(`/matches?scope=${scope}${game ? `&game=${encodeURIComponent(game)}` : ''}`),
   getMatch: (id: string) => call<Match>(`/matches/${id}`),
-  createMatch: (game: string, opponentPseudo?: string) =>
-    call<Match>('/matches', { method: 'POST', body: JSON.stringify({ game, opponentPseudo: opponentPseudo || undefined }) }),
+  createMatch: (game: string, opponentPseudo?: string, mode?: 'local' | 'remote') =>
+    call<Match>('/matches', { method: 'POST', body: JSON.stringify({ game, opponentPseudo: opponentPseudo || undefined, mode }) }),
+  acceptInvitation: (matchId: string) => call<Match>(`/matches/${matchId}/accept`, { method: 'POST' }),
+  declineInvitation: (matchId: string) => call<Match>(`/matches/${matchId}/decline`, { method: 'POST' }),
   createShifumi: (opponentPseudo: string, winnerPseudo: string, winnerPick: ShifumiPick, loserPick: ShifumiPick) =>
     call<Match>('/matches', {
       method: 'POST',
