@@ -1,5 +1,5 @@
 // Mince wrapper fetch : ajoute Bearer si dispo, sérialise JSON, jette une ApiError typée.
-import type { AuthResponse, LeaderboardEntry, Match, MatchSource, User } from './types';
+import type { AuthResponse, LeaderboardEntry, Match, MatchSource, ShifumiPick, User } from './types';
 
 const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 export const API_BASE_URL = BASE;
@@ -74,6 +74,15 @@ export const api = {
   getMatch: (id: string) => call<Match>(`/matches/${id}`),
   createMatch: (game: string, opponentPseudo?: string) =>
     call<Match>('/matches', { method: 'POST', body: JSON.stringify({ game, opponentPseudo: opponentPseudo || undefined }) }),
+  createShifumi: (opponentPseudo: string, winnerPseudo: string, winnerPick: ShifumiPick, loserPick: ShifumiPick) =>
+    call<Match>('/matches', {
+      method: 'POST',
+      body: JSON.stringify({
+        game: 'shifumi',
+        opponentPseudo,
+        shifumi: { winnerPseudo, winnerPick, loserPick },
+      }),
+    }),
   joinMatch: (code: string) =>
     call<Match>('/matches/join', { method: 'POST', body: JSON.stringify({ code }) }),
   patchScore: (id: string, scoreP1: number, scoreP2: number, source: MatchSource) =>

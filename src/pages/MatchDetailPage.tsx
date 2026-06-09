@@ -55,6 +55,15 @@ export function MatchDetailPage() {
     );
   }
 
+  // Shifumi : layout dédié, pas de polling ni d'édition de score (1 manche déjà résolue).
+  if (m.game === 'shifumi') {
+    return (
+      <Shell title={displayGame(m.game)} onBack={() => nav(-1)} action={<StatusBadge status={m.status} />}>
+        <ShifumiResult match={m} />
+      </Shell>
+    );
+  }
+
   return (
     <Shell title={displayGame(m.game)} onBack={() => nav(-1)} action={<StatusBadge status={m.status} />}>
       <div className="panel" style={{ padding: '40px 30px' }}>
@@ -121,6 +130,48 @@ function PlayerSide({ pseudo, tone, score, editable, onPlus, onMinus, avatarUrl 
           <button className="btn btn-accent btn-sm" onClick={onPlus}>+1</button>
         </div>
       )}
+    </div>
+  );
+}
+
+// Affichage d'un duel shifumi terminé : pseudos + emojis des picks + raison ("X bat Y").
+function ShifumiResult({ match: m }: { match: Match }) {
+  const meta = (m.metadata ?? null) as import('../api/types').ShifumiMetadata | null;
+  if (!meta) {
+    return <div className="panel" style={{ color: 'var(--muted)', textAlign: 'center' }}>Détails du duel manquants.</div>;
+  }
+  const E = {
+    rock: '🪨',
+    paper: '📄',
+    scissors: '✂️',
+  } as const;
+  const L = { rock: 'Pierre', paper: 'Papier', scissors: 'Ciseaux' } as const;
+  const reason = `${L[meta.winnerPick]} bat ${L[meta.loserPick]}`;
+  return (
+    <div className="panel" style={{ padding: '40px 30px', textAlign: 'center' }}>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 24 }}>
+        <PickColumn pseudo={meta.winnerPseudo} emoji={E[meta.winnerPick]} label={L[meta.winnerPick]} won />
+        <div style={{ fontFamily: 'var(--font-display)', fontSize: 36, color: 'var(--muted)' }}>vs</div>
+        <PickColumn pseudo={meta.loserPseudo} emoji={E[meta.loserPick]} label={L[meta.loserPick]} won={false} />
+      </div>
+      <div style={{
+        marginTop: 28, display: 'inline-block',
+        padding: '10px 18px', borderRadius: 999,
+        background: 'color-mix(in srgb, var(--win) 16%, transparent)',
+        color: 'var(--win)', fontWeight: 700, fontSize: 14,
+      }}>
+        🏆 {meta.winnerPseudo} gagne — {reason}
+      </div>
+    </div>
+  );
+}
+
+function PickColumn({ pseudo, emoji, label, won }: { pseudo: string; emoji: string; label: string; won: boolean }) {
+  return (
+    <div style={{ opacity: won ? 1 : 0.55 }}>
+      <div style={{ fontSize: 96, lineHeight: 1 }}>{emoji}</div>
+      <div style={{ fontWeight: 700, marginTop: 8 }}>{pseudo}</div>
+      <div style={{ color: 'var(--muted)', fontSize: 13 }}>{label}</div>
     </div>
   );
 }
