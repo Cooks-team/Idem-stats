@@ -1,0 +1,69 @@
+// Mince wrapper fetch : ajoute Bearer si dispo, sérialise JSON, jette une ApiError typée.
+import type { AuthResponse, LeaderboardEntry, Match, MatchSource, User } from './types';
+
+const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+
+let inMemoryToken: string | null = null;
+export function setToken(t: string | null) {
+  inMemoryToken = t;
+  if (typeof window !== 'undefined') {
+    if (t) localStorage.setItem('idem.token', t);
+    else localStorage.removeItem('idem.token');
+  }
+}
+export function readPersistedToken(): string | null {
+  if (inMemoryToken) return inMemoryToken;
+  if (typeof window === 'undefined') return null;
+  inMemoryToken = localStorage.getItem('idem.token');
+  return inMemoryToken;
+}
+
+export class ApiError extends Error {
+  status: number;
+  body: unknown;
+  constructor(status: number, body: unknown, message: string) {
+    super(message);
+    this.status = status;
+    this.body = body;
+  }
+}
+
+async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set('Content-Type', 'application/json');
+  const token = readPersistedToken();
+  if (token) headers.set('Authorization', `Bearer ${token}`);
+  const res = await fetch(`${BASE}${path}`, { ...init, headers });
+  const ct = res.headers.get('content-type') || '';
+  const data = ct.includes('application/json') ? await res.json().catch(() => null) : await res.text();
+  if (!res.ok) {
+    const msg = (data && typeof data === 'object' && 'error' in data && typeof (data as Record<string, unknown>).error === 'string')
+      ? String((data as Record<string, unknown>).error)
+      : `http_${res.status}`;
+    throw new ApiError(res.status, data, msg);
+  }
+  return data as T;
+}
+
+export const api = {
+  register: (pseudo: string, password: string) =>
+    call<AuthResponse>('/auth/register', { method: 'POST', body: JSON.stringify({ pseudo, password }) }),
+  login: (pseudo: string, password: string) =>
+    call<AuthResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ pseudo, password }) }),
+  me: () => call<User>('/me'),
+
+  listMatches: (scope: 'me' | 'all' = 'me', game?: string) =>
+    call<Match[]>(`/matches?scope=${scope}${game ? `&game=${encodeURIComponent(game)}` : ''}`),
+  getMatch: (id: string) => call<Match>(`/matches/${id}`),
+  createMatch: (game: string, opponentPseudo?: string) =>
+    call<Match>('/matches', { method: 'POST', body: JSON.stringify({ game, opponentPseudo: opponentPseudo || undefined }) }),
+  joinMatch: (code: string) =>
+    call<Match>('/matches/join', { method: 'POST', body: JSON.stringify({ code }) }),
+  patchScore: (id: string, scoreP1: number, scoreP2: number, source: MatchSource) =>
+    call<Match>(`/matches/${id}/score`, { method: 'PATCH', body: JSON.stringify({ scoreP1, scoreP2, source }) }),
+  finishMatch: (id: string) =>
+    call<Match>(`/matches/${id}/finish`, { method: 'POST' }),
+
+  leaderboard: (game?: string) =>
+    call<LeaderboardEntry[]>(`/leaderboard${game ? `?game=${encodeURIComponent(game)}` : ''}`),
+};

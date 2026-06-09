@@ -1,0 +1,200 @@
+/* Tokens repris à l'identique du design "PODIUM Desktop.html" (Anthropic Design). */
+:root {
+  --bg: #0B0D10;
+  --surface: #15181E;
+  --surface-2: #1E232C;
+  --line: rgba(255, 255, 255, 0.085);
+  --text: #F4F6F8;
+  --muted: #8A93A2;
+  --accent: #D6FF3D;
+  --accent-ink: #0B0D10;
+  --gold: #FFCB45;
+  --silver: #C7D0DA;
+  --bronze: #E08A4B;
+  --win: #46E08A;
+  --loss: #FF5C5C;
+  --blue: #5B8CFF;
+  --r: 18px;
+  --font-display: 'Oswald', sans-serif;
+  --font-body: 'Archivo', system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+#root { min-height: 100vh; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--surface-2); border-radius: 10px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-track { background: transparent; }
+button { font-family: var(--font-body); cursor: pointer; }
+input { font-family: var(--font-body); }
+input::placeholder { color: var(--muted); opacity: 1; }
+a { color: inherit; text-decoration: none; }
+
+/* ───── Layout shell (Sidebar + Topbar + Content), traduit du desktop-shell ───── */
+.shell { display: flex; min-height: 100vh; }
+.sidebar {
+  width: 256px; flex-shrink: 0; height: 100vh; position: sticky; top: 0;
+  border-right: 1px solid var(--line);
+  background: color-mix(in srgb, var(--surface) 50%, var(--bg));
+  display: flex; flex-direction: column; padding: 22px 16px;
+}
+.wordmark { display: inline-flex; align-items: center; gap: 10px; }
+.wordmark-bars { display: flex; align-items: flex-end; gap: 3px; height: 22px; }
+.wordmark-bars span { width: 5px; border-radius: 2px; }
+.wordmark-bars .b1 { height: 12px; background: var(--silver); }
+.wordmark-bars .b2 { height: 21px; background: var(--accent); }
+.wordmark-bars .b3 { height: 9px; background: var(--bronze); }
+.wordmark-text {
+  font-family: var(--font-display); font-weight: 700; font-size: 22px; letter-spacing: 3.5px; color: var(--text);
+}
+
+.sidebar-nav { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
+.nav-item {
+  position: relative;
+  display: flex; align-items: center; gap: 13px;
+  padding: 11px 13px; border-radius: 12px; border: none;
+  background: transparent; color: var(--muted);
+  font-weight: 600; font-size: 15px; text-align: left;
+  transition: background .15s, color .15s;
+}
+.nav-item:hover { background: color-mix(in srgb, var(--surface-2) 50%, transparent); }
+.nav-item.active { background: var(--surface-2); color: var(--text); }
+.nav-item.active::before {
+  content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 3px; height: 20px; border-radius: 3px; background: var(--accent);
+}
+.nav-item .icon { color: var(--muted); }
+.nav-item.active .icon { color: var(--accent); }
+
+.sidebar-footer { margin-top: auto; display: flex; flex-direction: column; gap: 12px; }
+.season-card { padding: 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--line); }
+.season-card .head { display: flex; align-items: center; gap: 7px; margin-bottom: 9px; }
+.season-card .dot { width: 7px; height: 7px; border-radius: 9px; background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.season-card .name { font-weight: 700; font-size: 13.5px; color: var(--text); }
+.season-card .sub { margin-left: auto; font-size: 11.5px; color: var(--muted); }
+.season-card .bar { height: 6px; border-radius: 6px; background: var(--surface-2); overflow: hidden; }
+.season-card .bar > div { height: 100%; background: var(--accent); border-radius: 6px; }
+.season-card .meta { font-size: 11.5px; color: var(--muted); margin-top: 7px; }
+
+.me-button {
+  display: flex; align-items: center; gap: 11px;
+  padding: 9px 10px; border-radius: 14px; border: 1px solid var(--line);
+  background: var(--surface); width: 100%;
+}
+.me-button .who { text-align: left; flex: 1; min-width: 0; }
+.me-button .who .name { font-weight: 700; font-size: 14px; color: var(--text); }
+.me-button .who .sub { font-size: 11.5px; color: var(--muted); }
+
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 16px;
+  padding: 20px 40px;
+  background: color-mix(in srgb, var(--bg) 82%, transparent);
+  backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+  border-bottom: 1px solid var(--line);
+}
+.topbar h1 {
+  font-family: var(--font-display); font-weight: 700;
+  font-size: 27px; letter-spacing: -0.3px; color: var(--text);
+  margin: 0; line-height: 1.1;
+}
+.topbar .subtitle { color: var(--muted); font-size: 13.5px; margin-top: 2px; }
+
+.icon-btn {
+  width: 40px; height: 40px; border-radius: 12px;
+  border: 1px solid var(--line); background: var(--surface);
+  display: inline-flex; align-items: center; justify-content: center;
+  position: relative; color: var(--text);
+}
+.icon-btn .badge { position: absolute; top: 9px; right: 10px; width: 7px; height: 7px; border-radius: 9px; background: var(--accent); }
+
+.content-scroll { flex: 1; overflow-y: auto; height: calc(100vh - 83px); }
+.content-inner { max-width: 1240px; margin: 0 auto; padding: 28px 40px 56px; }
+
+/* ───── Primitives ───── */
+.panel {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: var(--r); padding: 20px;
+}
+.eyebrow {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;
+}
+.eyebrow .label {
+  font-family: var(--font-display); font-weight: 600; font-size: 13px;
+  letter-spacing: 1.4px; text-transform: uppercase; color: var(--muted);
+}
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 14px 18px; border-radius: 14px; border: none;
+  font-weight: 700; font-size: 15.5px; letter-spacing: 0.2px;
+  transition: transform .12s, filter .12s;
+}
+.btn:active:not(:disabled) { transform: scale(0.97); }
+.btn:disabled { background: var(--surface-2); color: var(--muted); cursor: default; }
+.btn-accent { background: var(--accent); color: var(--accent-ink); }
+.btn-ghost { background: var(--surface-2); color: var(--text); }
+.btn-line { background: transparent; color: var(--text); border: 1px solid var(--line); }
+.btn-danger { background: color-mix(in srgb, var(--loss) 18%, transparent); color: var(--loss); }
+.btn-sm { padding: 9px 14px; font-size: 14px; }
+.btn-lg { padding: 17px 22px; font-size: 17px; }
+.btn-full { width: 100%; }
+
+.chip {
+  display: inline-flex; align-items: center;
+  padding: 8px 14px; border-radius: 999px;
+  border: none; white-space: nowrap;
+  background: var(--surface-2); color: var(--muted);
+  font-weight: 600; font-size: 13.5px; letter-spacing: 0.1px;
+  transition: background .15s, color .15s;
+}
+.chip.active { background: var(--text); color: var(--accent-ink); }
+.chip.active.accent { background: var(--accent); color: var(--accent-ink); }
+
+.tag {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 9px; border-radius: 7px;
+  background: rgba(255, 255, 255, 0.08); color: var(--muted);
+  font-size: 11px; font-weight: 700; letter-spacing: 0.5px; text-transform: uppercase;
+}
+.tag-accent { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+.tag-api    { background: rgba(91, 140, 255, 0.16); color: #8FB0FF; }
+.tag-gold   { background: rgba(255, 203, 69, 0.16); color: var(--gold); }
+
+.field {
+  background: var(--surface); border: 1px solid var(--line);
+  border-radius: 14px; padding: 10px 14px;
+  transition: border-color .15s;
+}
+.field:focus-within { border-color: var(--accent); }
+.field-label {
+  font-size: 11.5px; font-weight: 700; letter-spacing: 0.6px;
+  text-transform: uppercase; color: var(--muted); margin-bottom: 2px;
+}
+.field input {
+  width: 100%; border: none; outline: none; background: transparent;
+  color: var(--text); font-size: 16px; padding: 2px 0;
+}
+
+/* Avatar gradient — initiale dans un cercle. Gradient passé en var inline. */
+.avatar {
+  width: 44px; height: 44px; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--accent-ink);
+  font-family: var(--font-display); font-weight: 600; letter-spacing: 0.3px;
+}
+.avatar.ring {
+  box-shadow: 0 0 0 2.5px var(--ring-color, var(--accent)), 0 0 0 5px var(--bg);
+}
+
+.tabular { font-variant-numeric: tabular-nums; }
+
+/* Form layouts */
+.field-group { display: flex; flex-direction: column; gap: 10px; }
