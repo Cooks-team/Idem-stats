@@ -20,6 +20,7 @@ export function Shell({ title, subtitle, children, onBack, action }: {
     { to: '/', icon: 'trophy', label: 'Classement', end: true },
     { to: '/games', icon: 'grid', label: 'Jeux' },
     { to: '/matches', icon: 'pulse', label: 'Activité' },
+    { to: '/friends', icon: 'user', label: 'Amis' },
     { to: '/profile', icon: 'user', label: 'Profil' },
   ];
 

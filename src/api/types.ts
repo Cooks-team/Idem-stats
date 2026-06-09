@@ -11,11 +11,36 @@ export type MatchSource = 'extension' | 'web' | 'manual';
 
 export type ShifumiPick = 'rock' | 'paper' | 'scissors';
 
+export type ShifumiMode = 'irl' | 'remote';
+
 export interface ShifumiMetadata {
-  winnerPseudo: string;
-  loserPseudo: string;
-  winnerPick: ShifumiPick;
-  loserPick: ShifumiPick;
+  mode?: ShifumiMode;
+  // IRL (et reveal d'une remote terminée) :
+  winnerPseudo?: string;
+  loserPseudo?: string;
+  winnerPick?: ShifumiPick;
+  loserPick?: ShifumiPick;
+  // Remote pending / résolu :
+  creatorPick?: ShifumiPick;          // visible par le créateur en pending, par tous en finished
+  opponentPick?: ShifumiPick;         // visible par tous en finished
+  awaitingMyPick?: boolean;           // côté opponent en pending
+  awaitingOpponentPick?: boolean;     // côté créateur en pending
+  tie?: boolean;                       // égalité en remote
+}
+
+export interface FriendshipRow {
+  id: string;
+  status: 'pending' | 'accepted';
+  direction: 'incoming' | 'outgoing';
+  createdAt: string;
+  acceptedAt: string | null;
+  user: User;
+}
+
+export interface FriendsResponse {
+  friends: FriendshipRow[];
+  incoming: FriendshipRow[];
+  outgoing: FriendshipRow[];
 }
 
 export interface Match {
