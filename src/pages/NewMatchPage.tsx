@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { api } from '../api/client';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { absoluteAvatar, api } from '../api/client';
 import { SHIFUMI_EMOJIS, SHIFUMI_LABELS, SHIFUMI_LOSES_TO, SHIFUMI_PICKS, type ShifumiPick } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { Shell } from '../ui/Shell';
 import { Field } from '../ui/Field';
 import { Icon } from '../ui/Icon';
+import { Avatar } from '../ui/Avatar';
 import { KNOWN_GAMES } from '../games/registry';
 
 type Mode = 'create' | 'join';
@@ -38,11 +39,24 @@ export function NewMatchPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Liste des amis affichée sous forme de cartes cliquables → remplit l'opponent
+  // et bascule en mode invitation (remote).
+  const { data: friendsData } = useQuery({ queryKey: ['friends'], queryFn: () => api.listFriends(), staleTime: 30_000 });
+  const friends = friendsData?.friends ?? [];
+
+  // Pour les jeux non-shifumi : 'local' (même appareil) ou 'remote' (invitation à un ami).
+  // Quand on clique sur une carte d'ami, on passe en remote automatiquement.
+  const [duelMode, setDuelMode] = useState<'local' | 'remote'>(
+    (params.get('duelMode') as 'local' | 'remote') ?? 'local',
+  );
+
   const createMut = useMutation({
-    mutationFn: () => api.createMatch(game, opponent.trim() || undefined),
+    mutationFn: () => api.createMatch(game, opponent.trim() || undefined, duelMode),
     onSuccess: (m) => {
       qc.invalidateQueries({ queryKey: ['matches'] });
-      if (m.status === 'active') nav(`/matches/${m.id}`);
+      // active = on a démarré une partie locale, on file
+      // pending = invitation envoyée à un ami OU code à partager → on va au détail dans les 2 cas
+      nav(`/matches/${m.id}`);
     },
     onError: (e) => setError(humanize(e)),
   });
@@ -84,6 +98,23 @@ export function NewMatchPage() {
                   >{g.display}</button>
                 ))}
               </div>
+              {friends.length > 0 && !isShifumi && (
+                <>
+                  <div className="eyebrow" style={{ marginTop: 4 }}>
+                    <span className="label">Inviter un ami</span>
+                  </div>
+                  <FriendStrip
+                    friends={friends}
+                    selectedPseudo={opponent.trim()}
+                    onPick={(p) => { setOpponent(p); setDuelMode('remote'); setError(null); }}
+                  />
+                  <div style={{ color: 'var(--muted)', fontSize: 12.5 }}>
+                    Clique sur un ami pour lui envoyer une invitation au duel. Il devra l'accepter
+                    avant que la partie démarre.
+                  </div>
+                </>
+              )}
+
               {isShifumi ? (
                 <>
                   <div className="eyebrow" style={{ marginTop: 4 }}>
@@ -118,14 +149,27 @@ export function NewMatchPage() {
               ) : (
                 <>
                   <Field
-                    label="Adversaire (laisse vide pour un match à distance)"
+                    label="Adversaire (laisse vide pour un match avec code)"
                     placeholder="pseudo"
                     value={opponent}
-                    onChange={(e) => setOpponent(e.target.value)}
+                    onChange={(e) => { setOpponent(e.target.value); setError(null); }}
                   />
+                  {opponent.trim().length > 0 && (
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <button className={`chip ${duelMode === 'local' ? 'active accent' : ''}`} onClick={() => setDuelMode('local')}>
+                        📱 Local — même appareil
+                      </button>
+                      <button className={`chip ${duelMode === 'remote' ? 'active accent' : ''}`} onClick={() => setDuelMode('remote')}>
+                        ✉️ Invitation à distance
+                      </button>
+                    </div>
+                  )}
                   <div style={{ color: 'var(--muted)', fontSize: 12.5 }}>
-                    Adversaire renseigné + compte existant → match démarre direct.
-                    Sinon, on te donne un code à partager (ou à coller dans l'extension Chrome pour Basket Random).
+                    {opponent.trim().length === 0
+                      ? "Sans adversaire, on te donne un code à partager (utile pour Basket Random + extension)."
+                      : duelMode === 'local'
+                        ? "Match local : démarre direct sur le même appareil."
+                        : "Invitation : l'ami reçoit le défi, doit l'accepter pour démarrer."}
                   </div>
                   {error && <div style={{ color: 'var(--loss)', fontSize: 13 }}>{error}</div>}
                   <button
@@ -133,7 +177,7 @@ export function NewMatchPage() {
                     onClick={() => createMut.mutate()}
                     disabled={createMut.isPending}
                   >
-                    {createMut.isPending ? '…' : 'Créer le match'}
+                    {createMut.isPending ? '…' : (opponent.trim() && duelMode === 'remote' ? 'Envoyer l\'invitation' : 'Créer le match')}
                   </button>
                 </>
               )}
@@ -319,6 +363,43 @@ function PickButton({ pick, active, onClick, disabled }: { pick: ShifumiPick; ac
       <span style={{ fontSize: 36, lineHeight: 1 }}>{SHIFUMI_EMOJIS[pick]}</span>
       <span style={{ fontSize: 13, fontWeight: 700 }}>{SHIFUMI_LABELS[pick]}</span>
     </button>
+  );
+}
+
+// Petite grille d'amis avec avatars — pour piquer un opponent d'un clic.
+function FriendStrip({
+  friends, selectedPseudo, onPick,
+}: {
+  friends: import('../api/types').FriendshipRow[];
+  selectedPseudo: string;
+  onPick: (pseudo: string) => void;
+}) {
+  return (
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
+      gap: 10,
+    }}>
+      {friends.map((f) => {
+        const active = f.user.pseudo === selectedPseudo;
+        return (
+          <button
+            key={f.id}
+            onClick={() => onPick(f.user.pseudo)}
+            style={{
+              display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6,
+              padding: 10, borderRadius: 14,
+              border: `1px solid ${active ? 'var(--accent)' : 'var(--line)'}`,
+              background: active ? 'color-mix(in srgb, var(--accent) 14%, var(--surface))' : 'var(--surface)',
+              color: 'var(--text)', cursor: 'pointer',
+            }}
+          >
+            <Avatar seed={f.user.pseudo} size={42} imageUrl={absoluteAvatar(f.user.avatarUrl)} />
+            <span style={{ fontWeight: 700, fontSize: 13 }}>{f.user.pseudo}</span>
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
