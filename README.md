@@ -7,11 +7,26 @@ App desktop de **idem-stats**. Deux rôles :
 ## Stack
 React 18 + Vite + TypeScript, React Router, TanStack Query (polling/caching). CSS du design conservé tel quel (`src/styles/design.css`). Token JWT en mémoire + persistance `localStorage`.
 
-## Configuration
+## Boot rapide (Docker + Traefik externe)
+
+Pré-requis : un Traefik tourne déjà sur le réseau Docker externe `traefik`.
 
 ```bash
 cp .env.example .env
-# VITE_API_BASE_URL pointe par défaut sur http://localhost:3000
+
+# dev (HTTP, Vite avec HMR)
+docker compose --profile nossl up
+
+# prod (HTTPS via myhttpchallenge, build + preview)
+docker compose --profile ssl up -d
+```
+
+L'app est servie par Traefik sur `http(s)://${DOMAIN_WEBSITE}` (port 3000 interne).
+
+## Boot rapide (hors Docker)
+
+```bash
+cp .env.example .env
 npm install
 npm run dev
 ```

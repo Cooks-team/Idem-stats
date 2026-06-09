@@ -1,0 +1,48 @@
+networks:
+  traefik:
+    external: true
+
+services:
+  # ── dev / http (profile "nossl") — Vite en mode dev avec HMR ────────
+  web-nossl:
+    profiles: [ "nossl" ]
+    image: node:20-alpine
+    container_name: "${WEBSITE_NAME}"
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: "${VITE_API_BASE_URL:-http://localhost:3000}"
+    volumes:
+      - .:/app
+    working_dir: /app
+    # --host expose Vite hors du conteneur, --port aligné avec le label loadbalancer
+    command: /bin/sh -c "npm install && npm run dev -- --host --port 3000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      - "traefik.http.routers.${WEBSITE_NAME}.rule=Host(`${DOMAIN_WEBSITE}`)"
+      - "traefik.http.routers.${WEBSITE_NAME}.entrypoints=${ENTRYPOINT}"
+      - "traefik.http.services.${WEBSITE_NAME}.loadbalancer.server.port=3000"
+    networks:
+      - traefik
+
+  # ── prod / https (profile "ssl") — build + preview ──────────────────
+  web:
+    profiles: [ "ssl" ]
+    image: node:20-alpine
+    container_name: "${WEBSITE_NAME}"
+    restart: unless-stopped
+    environment:
+      VITE_API_BASE_URL: "${VITE_API_BASE_URL}"
+    volumes:
+      - .:/app
+    working_dir: /app
+    command: /bin/sh -c "npm install && npm run build && npm run preview -- --host --port 3000"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=traefik"
+      - "traefik.http.routers.${WEBSITE_NAME}.rule=Host(`${DOMAIN_WEBSITE}`)"
+      - "traefik.http.routers.${WEBSITE_NAME}.entrypoints=${ENTRYPOINT}"
+      - "traefik.http.services.${WEBSITE_NAME}.loadbalancer.server.port=3000"
+      - "traefik.http.routers.${WEBSITE_NAME}.tls.certresolver=myhttpchallenge"
+    networks:
+      - traefik
