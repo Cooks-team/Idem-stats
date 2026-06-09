@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
-import { api } from '../api/client';
+import { absoluteAvatar, api } from '../api/client';
 import { Shell } from '../ui/Shell';
 import { Avatar } from '../ui/Avatar';
 import { displayGame } from '../games/registry';
@@ -61,6 +61,7 @@ export function MatchDetailPage() {
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-around', gap: 30 }}>
           <PlayerSide
             pseudo={m.player1?.pseudo ?? 'P1'}
+            avatarUrl={m.player1?.avatarUrl}
             tone="var(--loss)"
             score={m.scoreP1}
             editable={m.status === 'active'}
@@ -70,6 +71,7 @@ export function MatchDetailPage() {
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 60, color: 'var(--muted)' }}>–</div>
           <PlayerSide
             pseudo={m.player2?.pseudo ?? 'P2'}
+            avatarUrl={m.player2?.avatarUrl}
             tone="var(--blue)"
             score={m.scoreP2}
             editable={m.status === 'active'}
@@ -100,13 +102,14 @@ export function MatchDetailPage() {
   );
 }
 
-function PlayerSide({ pseudo, tone, score, editable, onPlus, onMinus }: {
+function PlayerSide({ pseudo, tone, score, editable, onPlus, onMinus, avatarUrl }: {
   pseudo: string; tone: string; score: number; editable: boolean;
   onPlus: () => void; onMinus: () => void;
+  avatarUrl?: string | null;
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-      <Avatar seed={pseudo} size={88} ring ringColor={tone} />
+      <Avatar seed={pseudo} size={88} ring ringColor={tone} imageUrl={absoluteAvatar(avatarUrl ?? null)} />
       <div style={{ fontWeight: 700, fontSize: 18 }}>{pseudo}</div>
       <div className="tabular" style={{
         fontFamily: 'var(--font-display)', fontWeight: 700,

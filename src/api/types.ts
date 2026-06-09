@@ -2,6 +2,7 @@
 export interface User {
   id: string;
   pseudo: string;
+  avatarUrl?: string | null;
   createdAt?: string;
 }
 

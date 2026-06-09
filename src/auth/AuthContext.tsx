@@ -8,6 +8,9 @@ interface AuthState {
   login: (pseudo: string, password: string) => Promise<void>;
   register: (pseudo: string, password: string) => Promise<void>;
   logout: () => void;
+  // Exposé pour qu'un sous-composant (ProfilePage upload) puisse mettre à jour le user
+  // courant après un POST /me/avatar — évite un round-trip via /me.
+  setUser: (u: User) => void;
 }
 
 const Ctx = createContext<AuthState | null>(null);
@@ -50,7 +53,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
-  const value = useMemo(() => ({ user, ready, login, register, logout }), [user, ready, login, register, logout]);
+  const value = useMemo(
+    () => ({ user, ready, login, register, logout, setUser }),
+    [user, ready, login, register, logout],
+  );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }
 
