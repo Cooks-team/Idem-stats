@@ -1,0 +1,79 @@
+import type { ReactNode } from 'react';
+import { NavLink, useNavigate } from 'react-router-dom';
+import { Wordmark } from './Wordmark';
+import { Icon } from './Icon';
+import { Avatar } from './Avatar';
+import { useAuth } from '../auth/AuthContext';
+
+// Shell desktop : Sidebar + Topbar + Content. Reprend la structure exacte du design.
+export function Shell({ title, subtitle, children, onBack, action }: {
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+  onBack?: () => void;
+  action?: ReactNode;
+}) {
+  const { user } = useAuth();
+  const nav = useNavigate();
+  const items: Array<{ to: string; icon: 'trophy' | 'grid' | 'pulse' | 'user'; label: string; end?: boolean }> = [
+    { to: '/', icon: 'trophy', label: 'Classement', end: true },
+    { to: '/games', icon: 'grid', label: 'Jeux' },
+    { to: '/matches', icon: 'pulse', label: 'Activité' },
+    { to: '/profile', icon: 'user', label: 'Profil' },
+  ];
+
+  return (
+    <div className="shell">
+      <aside className="sidebar">
+        <div style={{ padding: '6px 10px 22px' }}><Wordmark /></div>
+        <nav className="sidebar-nav">
+          {items.map((it) => (
+            <NavLink
+              key={it.to}
+              to={it.to}
+              end={it.end}
+              className={({ isActive }) => 'nav-item' + (isActive ? ' active' : '')}
+            >
+              <span className="icon"><Icon name={it.icon} size={20} /></span>
+              {it.label}
+            </NavLink>
+          ))}
+        </nav>
+        <div className="sidebar-footer">
+          {user && (
+            <button className="me-button" onClick={() => nav('/profile')}>
+              <Avatar seed={user.pseudo} size={36} />
+              <div className="who">
+                <div className="name">{user.pseudo}</div>
+                <div className="sub">connecté</div>
+              </div>
+              <Icon name="chevron" size={16} color="var(--muted)" />
+            </button>
+          )}
+        </div>
+      </aside>
+
+      <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <header className="topbar">
+          {onBack && (
+            <button className="icon-btn" onClick={onBack}>
+              <Icon name="back" size={20} />
+            </button>
+          )}
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h1>{title}</h1>
+            {subtitle && <div className="subtitle">{subtitle}</div>}
+          </div>
+          {action ?? (
+            <button className="btn btn-accent btn-sm" onClick={() => nav('/matches/new')}>
+              <Icon name="bolt" size={18} /> Nouveau match
+            </button>
+          )}
+        </header>
+        <div className="content-scroll">
+          <div className="content-inner">{children}</div>
+        </div>
+      </main>
+    </div>
+  );
+}
