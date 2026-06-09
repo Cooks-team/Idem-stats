@@ -1,6 +1,7 @@
 import type { LeaderboardEntry } from '../api/types';
 import { Avatar } from './Avatar';
 import { Icon } from './Icon';
+import { absoluteAvatar } from '../api/client';
 
 // Podium top 3 : ordre visuel [2, 1, 3], hauteurs 120/170/96, médailles or/argent/bronze.
 // Comme la version mobile mais plus grand pour le desktop.
@@ -28,7 +29,7 @@ export function Podium({ top3, onPlayerClick }: {
           >
             <div style={{ position: 'relative', marginBottom: 10 }}>
               {r === 1 ? <Icon name="crown" size={28} color="var(--gold)" stroke={2.4} /> : <div style={{ height: 28 }} />}
-              <Avatar seed={entry.user.pseudo} size={r === 1 ? 84 : 70} ring ringColor={tint} />
+              <Avatar seed={entry.user.pseudo} size={r === 1 ? 84 : 70} ring ringColor={tint} imageUrl={absoluteAvatar(entry.user.avatarUrl)} />
             </div>
             <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--text)' }}>{entry.user.pseudo}</div>
             <div className="tabular" style={{

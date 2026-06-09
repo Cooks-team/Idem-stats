@@ -4,6 +4,7 @@ import { Wordmark } from './Wordmark';
 import { Icon } from './Icon';
 import { Avatar } from './Avatar';
 import { useAuth } from '../auth/AuthContext';
+import { absoluteAvatar } from '../api/client';
 
 // Shell desktop : Sidebar + Topbar + Content. Reprend la structure exacte du design.
 export function Shell({ title, subtitle, children, onBack, action }: {
@@ -42,7 +43,7 @@ export function Shell({ title, subtitle, children, onBack, action }: {
         <div className="sidebar-footer">
           {user && (
             <button className="me-button" onClick={() => nav('/profile')}>
-              <Avatar seed={user.pseudo} size={36} />
+              <Avatar seed={user.pseudo} size={36} imageUrl={absoluteAvatar(user.avatarUrl)} />
               <div className="who">
                 <div className="name">{user.pseudo}</div>
                 <div className="sub">connecté</div>

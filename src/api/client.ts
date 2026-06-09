@@ -2,6 +2,15 @@
 import type { AuthResponse, LeaderboardEntry, Match, MatchSource, User } from './types';
 
 const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
+export const API_BASE_URL = BASE;
+
+// Compose une URL absolue pour un avatarUrl renvoyé par l'API ("/uploads/avatars/...").
+// Si la valeur est déjà absolue (http(s)://...), on la laisse telle quelle.
+export function absoluteAvatar(avatarUrl: string | null | undefined): string | null {
+  if (!avatarUrl) return null;
+  if (/^https?:\/\//.test(avatarUrl)) return avatarUrl;
+  return BASE + avatarUrl;
+}
 
 let inMemoryToken: string | null = null;
 export function setToken(t: string | null) {
@@ -30,7 +39,7 @@ export class ApiError extends Error {
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
-  headers.set('Content-Type', 'application/json');
+  if (!(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
   const token = readPersistedToken();
   if (token) headers.set('Authorization', `Bearer ${token}`);
   const res = await fetch(`${BASE}${path}`, { ...init, headers });
@@ -51,6 +60,14 @@ export const api = {
   login: (pseudo: string, password: string) =>
     call<AuthResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ pseudo, password }) }),
   me: () => call<User>('/me'),
+
+  // Multipart : un FormData avec une seule entrée "file" (cf. multer côté API).
+  uploadAvatar: (file: File) => {
+    const fd = new FormData();
+    fd.append('file', file);
+    return call<User>('/me/avatar', { method: 'POST', body: fd });
+  },
+  deleteAvatar: () => call<User>('/me/avatar', { method: 'DELETE' }),
 
   listMatches: (scope: 'me' | 'all' = 'me', game?: string) =>
     call<Match[]>(`/matches?scope=${scope}${game ? `&game=${encodeURIComponent(game)}` : ''}`),

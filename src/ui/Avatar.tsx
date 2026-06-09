@@ -1,4 +1,6 @@
 // Avatar = cercle gradient déterministe par pseudo + initiale en Display.
+// Si imageUrl est fournie ET non vide, on affiche l'image à la place — le gradient
+// sert de fallback pendant le chargement.
 
 const PAL: Array<[string, string]> = [
   ['#D6FF3D', '#7BB800'],
@@ -26,10 +28,11 @@ interface Props {
   size?: number;
   ring?: boolean;
   ringColor?: string;
+  imageUrl?: string | null;
   onClick?: () => void;
 }
 
-export function Avatar({ seed, size = 44, ring = false, ringColor, onClick }: Props) {
+export function Avatar({ seed, size = 44, ring = false, ringColor, imageUrl, onClick }: Props) {
   const [c1, c2] = avatarPair(seed);
   const initial = seed.charAt(0).toUpperCase() || '?';
   return (
@@ -43,9 +46,25 @@ export function Avatar({ seed, size = 44, ring = false, ringColor, onClick }: Pr
         background: `linear-gradient(150deg, ${c1}, ${c2})`,
         ...(ringColor ? ({ ['--ring-color' as never]: ringColor } as never) : {}),
         cursor: onClick ? 'pointer' : 'default',
+        overflow: 'hidden',
+        position: 'relative',
       }}
     >
-      {initial}
+      {imageUrl ? (
+        <img
+          src={imageUrl}
+          alt=""
+          style={{
+            position: 'absolute', inset: 0,
+            width: '100%', height: '100%',
+            objectFit: 'cover',
+            // l'image est par-dessus le gradient (qui sert de fallback pendant le chargement)
+          }}
+          onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = 'none'; }}
+        />
+      ) : (
+        initial
+      )}
     </div>
   );
 }

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { api } from '../api/client';
+import { absoluteAvatar, api } from '../api/client';
 import type { LeaderboardEntry } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { Shell } from '../ui/Shell';
@@ -65,7 +65,7 @@ export function HomePage() {
               cursor: 'pointer',
             }} onClick={() => nav('/profile')}>
               <RankNum n={myRank} size={22} />
-              <Avatar seed={user!.pseudo} size={46} />
+              <Avatar seed={user!.pseudo} size={46} imageUrl={absoluteAvatar(user!.avatarUrl)} />
               <div style={{ flex: 1 }}>
                 <div style={{ fontWeight: 700, fontSize: 17 }}>Vous · {user!.pseudo}</div>
                 <div style={{ fontSize: 13, color: 'var(--muted)' }}>
@@ -118,7 +118,7 @@ function RankRow({ rank, entry, onClick }: { rank: number; entry: LeaderboardEnt
       }}
     >
       <RankNum n={rank} />
-      <Avatar seed={entry.user.pseudo} size={40} />
+      <Avatar seed={entry.user.pseudo} size={40} imageUrl={absoluteAvatar(entry.user.avatarUrl)} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 600, fontSize: 15.5 }}>{entry.user.pseudo}</div>
         <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{entry.wins}V · {entry.losses}D</div>
