@@ -3,6 +3,9 @@ import { LoginPage } from './auth/LoginPage';
 import { RequireAuth } from './auth/RequireAuth';
 import { HomePage } from './pages/HomePage';
 import { ProfilePage } from './pages/ProfilePage';
+import { MatchesPage } from './pages/MatchesPage';
+import { NewMatchPage } from './pages/NewMatchPage';
+import { MatchDetailPage } from './pages/MatchDetailPage';
 
 export function App() {
   return (
@@ -10,6 +13,9 @@ export function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route path="/" element={<RequireAuth><HomePage /></RequireAuth>} />
       <Route path="/profile" element={<RequireAuth><ProfilePage /></RequireAuth>} />
+      <Route path="/matches" element={<RequireAuth><MatchesPage /></RequireAuth>} />
+      <Route path="/matches/new" element={<RequireAuth><NewMatchPage /></RequireAuth>} />
+      <Route path="/matches/:id" element={<RequireAuth><MatchDetailPage /></RequireAuth>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
