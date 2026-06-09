@@ -218,6 +218,7 @@ function ShifumiForm({
   const { user } = useAuth();
   const [whoWon, setWhoWon] = useState<'me' | 'them' | null>(null);
   const [winnerPick, setWinnerPick] = useState<ShifumiPick | null>(null);
+  const [condition, setCondition] = useState('');
   // Le pick perdant n'a qu'une seule valeur possible une fois winnerPick choisi.
   const forcedLoserPick = useMemo(() => (winnerPick ? SHIFUMI_LOSES_TO[winnerPick] : null), [winnerPick]);
 
@@ -228,7 +229,7 @@ function ShifumiForm({
       const opp = opponent.trim();
       if (!opp) throw new Error('opponent_required');
       const winnerPseudo = whoWon === 'me' ? user!.pseudo : opp;
-      return api.createShifumi(opp, winnerPseudo, winnerPick, forcedLoserPick);
+      return api.createShifumi(opp, winnerPseudo, winnerPick, forcedLoserPick, condition.trim() || undefined);
     },
     onSuccess,
     onError: (e) => setError(humanize(e)),
@@ -278,6 +279,19 @@ function ShifumiForm({
         </>
       )}
 
+      <div className="eyebrow" style={{ marginTop: 12 }}>
+        <span className="label">Condition du duel (optionnel)</span>
+      </div>
+      <Field
+        label="Enjeu"
+        placeholder="ex : celui qui perd paye le café"
+        value={condition}
+        onChange={(e) => setCondition(e.target.value.slice(0, 200))}
+      />
+      <div style={{ color: 'var(--muted)', fontSize: 12 }}>
+        Une phrase courte que les deux joueurs voient avant et après le duel ({condition.length}/200).
+      </div>
+
       {error && <div style={{ color: 'var(--loss)', fontSize: 13, marginTop: 6 }}>{error}</div>}
 
       <button
@@ -303,11 +317,12 @@ function ShifumiRemoteForm({
   error: string | null;
 }) {
   const [myPick, setMyPick] = useState<ShifumiPick | null>(null);
+  const [condition, setCondition] = useState('');
   const mut = useMutation({
     mutationFn: () => {
       if (!myPick) throw new Error('missing_pick');
       if (opponent.trim().length < 3) throw new Error('opponent_required');
-      return api.createShifumiRemote(opponent.trim(), myPick);
+      return api.createShifumiRemote(opponent.trim(), myPick, condition.trim() || undefined);
     },
     onSuccess,
     onError: (e) => setError(humanize(e)),
@@ -322,6 +337,16 @@ function ShifumiRemoteForm({
       />
       <div className="eyebrow"><span className="label">Ton choix (secret jusqu'au reveal)</span></div>
       <PickRow value={myPick} onChange={setMyPick} />
+      <div className="eyebrow" style={{ marginTop: 8 }}><span className="label">Condition du duel (optionnel)</span></div>
+      <Field
+        label="Enjeu"
+        placeholder="ex : le perdant range la vaisselle"
+        value={condition}
+        onChange={(e) => setCondition(e.target.value.slice(0, 200))}
+      />
+      <div style={{ color: 'var(--muted)', fontSize: 12 }}>
+        Cet enjeu sera visible des deux joueurs avant et après le reveal ({condition.length}/200).
+      </div>
       {error && <div style={{ color: 'var(--loss)', fontSize: 13 }}>{error}</div>}
       <button
         className="btn btn-accent btn-lg btn-full"

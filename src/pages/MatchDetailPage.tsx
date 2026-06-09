@@ -228,6 +228,11 @@ function ShifumiRemotePending({ match: m }: { match: Match }) {
   if (isCreator) {
     return (
       <div className="panel" style={{ padding: 40, textAlign: 'center' }}>
+        {meta.condition && (
+          <div style={{ marginBottom: 16, color: 'var(--accent)', fontWeight: 700, fontSize: 14 }}>
+            🎯 Enjeu : {meta.condition}
+          </div>
+        )}
         <div style={{ color: 'var(--muted)', fontSize: 13 }}>Ton choix (secret)</div>
         <div style={{ fontSize: 96, lineHeight: 1, marginTop: 6 }}>{meta.creatorPick ? SHIFUMI_EMOJIS[meta.creatorPick] : '🤐'}</div>
         <div style={{ marginTop: 16, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 24 }}>
@@ -243,6 +248,11 @@ function ShifumiRemotePending({ match: m }: { match: Match }) {
   // Opponent : doit choisir, son choix déclenche le reveal.
   return (
     <div className="panel" style={{ padding: 40, textAlign: 'center' }}>
+      {meta.condition && (
+        <div style={{ marginBottom: 16, color: 'var(--accent)', fontWeight: 700, fontSize: 14 }}>
+          🎯 Enjeu : {meta.condition}
+        </div>
+      )}
       <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 26 }}>
         {m.player1?.pseudo ?? 'L\'adversaire'} te défie au Shifumi
       </div>
@@ -318,6 +328,17 @@ function ShifumiResult({ match: m, animate }: { match: Match; animate: boolean }
 
   return (
     <div className="panel" style={{ padding: '40px 30px', textAlign: 'center' }}>
+      {/* Enjeu du duel — affiché EN HAUT pour que tout le monde le lise */}
+      {meta.condition && (
+        <div style={{
+          marginBottom: 24, display: 'inline-block',
+          padding: '8px 16px', borderRadius: 999,
+          background: 'color-mix(in srgb, var(--accent) 12%, transparent)',
+          color: 'var(--accent)', fontWeight: 700, fontSize: 13.5,
+        }}>
+          🎯 Enjeu : {meta.condition}
+        </div>
+      )}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr auto 1fr', alignItems: 'center', gap: 24 }}>
         <PickColumn pseudo={m.player1?.pseudo ?? 'P1'} pick={p1Pick} won={winnerPseudo === m.player1?.pseudo} />
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 36, color: 'var(--muted)' }}>vs</div>
