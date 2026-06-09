@@ -2,9 +2,11 @@ import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { absoluteAvatar, api } from '../api/client';
+import type { Match, ShifumiMetadata } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { Shell } from '../ui/Shell';
 import { Avatar } from '../ui/Avatar';
+import { displayGame } from '../games/registry';
 
 export function ProfilePage() {
   const { user, logout, setUser } = useAuth();
@@ -26,6 +28,13 @@ export function ProfilePage() {
   const targetAvatar = isMe ? user?.avatarUrl : entry?.user.avatarUrl;
   const imageUrl = absoluteAvatar(targetAvatar ?? null);
 
+  // Historique des matchs (finis pour la plupart) du user affiché.
+  const { data: history = [], isLoading: histLoading } = useQuery({
+    queryKey: ['history', target ?? ''],
+    queryFn: () => target ? api.listMatchesOf(target) : Promise.resolve([] as Match[]),
+    enabled: !!target,
+  });
+
   return (
     <Shell title={isMe ? 'Mon profil' : `Profil — ${target}`} onBack={requested ? () => nav(-1) : undefined}>
       <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
@@ -46,6 +55,25 @@ export function ProfilePage() {
         <Stat label="Winrate" value={entry ? `${Math.round(entry.winrate * 100)}%` : '—'} color="var(--accent)" />
       </div>
 
+      {/* Historique des duels */}
+      <div style={{ marginTop: 32 }}>
+        <div className="eyebrow"><span className="label">Historique des duels</span></div>
+        {histLoading && history.length === 0 ? (
+          <div className="panel" style={{ color: 'var(--muted)', textAlign: 'center' }}>Chargement…</div>
+        ) : history.length === 0 ? (
+          <div className="panel" style={{ color: 'var(--muted)', textAlign: 'center' }}>Aucun duel pour l'instant.</div>
+        ) : (
+          <div className="panel" style={{ padding: 6 }}>
+            {history.filter((m) => m.status === 'finished').slice(0, 30).map((m) => (
+              <HistoryRow key={m.id} match={m} viewedPseudo={target ?? ''} onPlayer={(p) => nav(`/profile?pseudo=${encodeURIComponent(p)}`)} onOpen={() => nav(`/matches/${m.id}`)} />
+            ))}
+            {history.filter((m) => m.status === 'finished').length === 0 && (
+              <div style={{ padding: 16, textAlign: 'center', color: 'var(--muted)' }}>Pas encore de duel terminé.</div>
+            )}
+          </div>
+        )}
+      </div>
+
       {isMe && (
         <div style={{ marginTop: 32 }}>
           <button className="btn btn-ghost" onClick={() => { logout(); nav('/login'); }}>Se déconnecter</button>
@@ -55,8 +83,69 @@ export function ProfilePage() {
   );
 }
 
-// Bouton "Changer la photo" + DELETE. Invalide leaderboard pour rafraîchir les
-// avatars partout (podium + RankRow + Shell).
+// Une ligne d'historique : opponent (cliquable), jeu, score, W/L, date, condition shifumi.
+function HistoryRow({ match: m, viewedPseudo, onPlayer, onOpen }: {
+  match: Match;
+  viewedPseudo: string;
+  onPlayer: (pseudo: string) => void;
+  onOpen: () => void;
+}) {
+  // "viewedPseudo" = côté du profil regardé. On normalise pour que "moi" = ce profil.
+  const meIsP1 = m.player1?.pseudo === viewedPseudo;
+  const opponent = meIsP1 ? m.player2 : m.player1;
+  const myScore = meIsP1 ? m.scoreP1 : m.scoreP2;
+  const oppScore = meIsP1 ? m.scoreP2 : m.scoreP1;
+  const myId = meIsP1 ? m.player1Id : m.player2Id;
+  const won = m.winnerId === myId;
+  const tie = m.winnerId == null;
+  const result = tie ? 'NUL' : won ? 'V' : 'D';
+  const resultColor = tie ? 'var(--muted)' : won ? 'var(--win)' : 'var(--loss)';
+  const meta = (m.metadata ?? null) as ShifumiMetadata | null;
+  const condition = m.game === 'shifumi' ? meta?.condition : undefined;
+  const date = m.finishedAt ?? m.createdAt;
+
+  return (
+    <div
+      style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '10px 12px', borderRadius: 12, cursor: 'pointer' }}
+      onClick={onOpen}
+    >
+      <span style={{
+        width: 36, textAlign: 'center', fontFamily: 'var(--font-display)', fontWeight: 700,
+        color: resultColor, fontSize: 18,
+      }}>{result}</span>
+      <button
+        onClick={(e) => { e.stopPropagation(); opponent && onPlayer(opponent.pseudo); }}
+        style={{ background: 'none', border: 'none', cursor: opponent ? 'pointer' : 'default', padding: 0 }}
+      >
+        <Avatar seed={opponent?.pseudo ?? '?'} size={36} imageUrl={absoluteAvatar(opponent?.avatarUrl)} />
+      </button>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontWeight: 600, fontSize: 15 }}>
+          <span style={{ color: 'var(--muted)' }}>vs </span>
+          <span
+            style={{ textDecoration: 'underline dotted', cursor: opponent ? 'pointer' : 'default' }}
+            onClick={(e) => { e.stopPropagation(); opponent && onPlayer(opponent.pseudo); }}
+          >{opponent?.pseudo ?? '—'}</span>
+        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+          {displayGame(m.game)} · {formatDate(date)}
+          {condition ? <> · <span style={{ color: 'var(--accent)' }}>🎯 {condition}</span></> : null}
+        </div>
+      </div>
+      <div className="tabular" style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 18 }}>
+        {myScore} <span style={{ color: 'var(--muted)' }}>–</span> {oppScore}
+      </div>
+    </div>
+  );
+}
+
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
 function AvatarUpload({ onChange, hasAvatar }: { onChange: (u: import('../api/types').User) => void; hasAvatar: boolean }) {
   const ref = useRef<HTMLInputElement>(null);
   const qc = useQueryClient();
@@ -86,7 +175,6 @@ function AvatarUpload({ onChange, hasAvatar }: { onChange: (u: import('../api/ty
           if (!f) return;
           if (f.size > 2 * 1024 * 1024) { setError('Image > 2 Mo'); return; }
           uploadMut.mutate(f);
-          // reset pour pouvoir re-uploader le même fichier
           if (ref.current) ref.current.value = '';
         }}
       />

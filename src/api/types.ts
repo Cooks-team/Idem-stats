@@ -26,6 +26,8 @@ export interface ShifumiMetadata {
   awaitingMyPick?: boolean;           // côté opponent en pending
   awaitingOpponentPick?: boolean;     // côté créateur en pending
   tie?: boolean;                       // égalité en remote
+  // Enjeu du duel ("celui qui perd paye"…), max 200 chars, visible des deux côtés
+  condition?: string;
 }
 
 export interface FriendshipRow {
