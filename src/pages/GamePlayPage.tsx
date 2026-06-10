@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Shell } from '../ui/Shell';
 import { Field } from '../ui/Field';
-import { api } from '../api/client';
+import { Avatar } from '../ui/Avatar';
+import { absoluteAvatar, api } from '../api/client';
 import type { Match } from '../api/types';
 import { moduleById } from '../games/GameModule';
 import { reportScore } from '../games/reportScore';
@@ -23,8 +24,20 @@ export function GamePlayPage() {
   const [match, setMatch] = useState<Match | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // On affiche la liste d'amis pour pouvoir lancer un duel d'un tap sans
+  // taper de pseudo. Fallback : input pseudo classique en dessous.
+  const { data: friendsData } = useQuery({
+    queryKey: ['friends'],
+    queryFn: () => api.listFriends(),
+    staleTime: 30_000,
+  });
+  const friends = friendsData?.friends ?? [];
+
+  // Mutation acceptant le pseudo en argument → on peut la déclencher sans
+  // attendre que le state opponent soit synchro (utile pour le click sur
+  // un ami : on lance direct avec son pseudo).
   const createMut = useMutation({
-    mutationFn: () => api.createMatch(mod!.apiId, opponent.trim()),
+    mutationFn: (pseudo: string) => api.createMatch(mod!.apiId, pseudo.trim()),
     onSuccess: (m) => {
       setMatch(m);
       setPhase('playing');
@@ -55,26 +68,80 @@ export function GamePlayPage() {
   return (
     <Shell title={mod.name} onBack={() => nav('/games')} action={<span />}>
       {phase === 'setup' && (
-        <div className="panel field-group" style={{ maxWidth: 540 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, maxWidth: 640 }}>
           <p style={{ color: 'var(--muted)', margin: 0 }}>
-            Qui affronte qui ? Saisis le pseudo de ton adversaire (compte existant).
-            La partie se joue ici, sur le même écran.
+            Qui affronte qui ? Tape un ami pour lancer direct, ou saisis le pseudo
+            d'un autre joueur. La partie se joue ici, sur le même écran.
           </p>
-          <Field label="Adversaire" placeholder="pseudo" value={opponent} onChange={(e) => setOpponent(e.target.value)} />
-          {error && <div style={{ color: 'var(--loss)', fontSize: 13 }}>{error}</div>}
-          <button
-            className="btn btn-accent btn-lg btn-full"
-            disabled={opponent.trim().length < 3 || createMut.isPending}
-            onClick={() => createMut.mutate()}
-          >
-            {createMut.isPending ? '…' : 'Lancer la partie'}
-          </button>
+
+          {friends.length > 0 && (
+            <div className="panel" style={{ padding: 16 }}>
+              <div className="eyebrow"><span className="label">Mes amis</span></div>
+              <div style={{
+                display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))',
+                gap: 10,
+              }}>
+                {friends.map((f) => (
+                  <button
+                    key={f.id}
+                    onClick={() => createMut.mutate(f.user.pseudo)}
+                    disabled={createMut.isPending}
+                    style={{
+                      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
+                      padding: '14px 8px', borderRadius: 12,
+                      background: 'var(--surface-2)',
+                      border: '1px solid var(--line)',
+                      color: 'var(--text)', cursor: createMut.isPending ? 'wait' : 'pointer',
+                      transition: 'transform .08s ease, border-color .15s ease',
+                    }}
+                    onMouseEnter={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--accent)'; }}
+                    onMouseLeave={(e) => { (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--line)'; }}
+                  >
+                    <Avatar seed={f.user.pseudo} size={56} imageUrl={absoluteAvatar(f.user.avatarUrl)} />
+                    <div style={{ fontWeight: 600, fontSize: 14, textAlign: 'center', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '100%', whiteSpace: 'nowrap' }}>
+                      {f.user.pseudo}
+                    </div>
+                    <span style={{
+                      fontSize: 11, fontWeight: 700, letterSpacing: 0.5,
+                      color: 'var(--accent-ink)', background: 'var(--accent)',
+                      padding: '3px 8px', borderRadius: 6,
+                    }}>⚔️ Duel</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div className="panel field-group" style={{ padding: 16 }}>
+            <div className="eyebrow">
+              <span className="label">{friends.length > 0 ? 'Ou par pseudo' : 'Adversaire'}</span>
+            </div>
+            <Field
+              label="Adversaire"
+              placeholder="pseudo (compte existant)"
+              value={opponent}
+              onChange={(e) => setOpponent(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && opponent.trim().length >= 3 && createMut.mutate(opponent.trim())}
+            />
+            {error && <div style={{ color: 'var(--loss)', fontSize: 13 }}>{error}</div>}
+            <button
+              className="btn btn-accent btn-lg btn-full"
+              disabled={opponent.trim().length < 3 || createMut.isPending}
+              onClick={() => createMut.mutate(opponent.trim())}
+            >
+              {createMut.isPending ? '…' : 'Lancer la partie'}
+            </button>
+          </div>
         </div>
       )}
 
       {phase === 'playing' && match && (
         <div className="panel" style={{ padding: 20 }}>
-          <mod.Component onFinish={(p1, p2) => reportMut.mutate({ p1, p2 })} />
+          <mod.Component
+            onFinish={(p1, p2) => reportMut.mutate({ p1, p2 })}
+            player1={match.player1 ? { pseudo: match.player1.pseudo, avatarUrl: absoluteAvatar(match.player1.avatarUrl ?? null) } : undefined}
+            player2={match.player2 ? { pseudo: match.player2.pseudo, avatarUrl: absoluteAvatar(match.player2.avatarUrl ?? null) } : undefined}
+          />
         </div>
       )}
 

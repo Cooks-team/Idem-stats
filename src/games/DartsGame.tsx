@@ -1,128 +1,314 @@
 import { useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
 
-// Darts 1v1 — version arcade.
-// Chaque joueur joue 5 tours de 3 fléchettes. À son tour, il clique sur la cible :
-// la fléchette atterrit à proximité (avec un léger offset aléatoire pour simuler
-// la difficulté). Score par zone : bullseye 50, mid 25, inner 10, outer 5, dehors 0.
-// Après 5 tours pour chacun (30 fléchettes au total), le plus haut score gagne.
+// Fléchettes — mécanique 501 façon Plato.
+//   - Chaque joueur démarre à 501 points
+//   - À son tour, il lance 3 fléchettes en touchant la cible
+//   - Le score de chaque dart est soustrait au total
+//   - Première personne à exactement 0 GAGNE
+//   - Si une dart fait passer le total en dessous de 0 → "BUST"
+//     la dart compte 0 et on passe au joueur suivant
+//   - Tour par tour, alternance après les 3 darts (ou un bust)
+// Cible SVG : 20 segments standard (20 en haut, sens horaire 1,18,4,13,…),
+// rings double / triple (cylindres rouge/vert), bull (vert 25), bullseye
+// (rouge 50). Le tap/click sur la cible = throw précis (pas de spread —
+// la difficulté c'est de viser juste sur petite surface, surtout sur mobile).
 
-const ROUNDS = 5;
+const START_SCORE = 501;
 const DARTS_PER_TURN = 3;
-const BOARD_R = 150;     // rayon visuel
-const SPREAD = 22;       // px d'écart aléatoire autour du clic
 
-interface Hit { x: number; y: number; score: number; player: 1 | 2; turn: number }
+// Rayons (en unités SVG, board centré 0,0 avec radius 1.0)
+const R_BULLSEYE = 0.038;
+const R_BULL     = 0.094;
+const R_TRIPLE_IN = 0.55;
+const R_TRIPLE_OUT = 0.605;
+const R_DOUBLE_IN  = 0.94;
+const R_DOUBLE_OUT = 1.0;
+
+// Ordre des segments en partant du haut, sens horaire (standard "20 au sommet")
+const SEGMENTS = [20, 1, 18, 4, 13, 6, 10, 15, 2, 17, 3, 19, 7, 16, 8, 11, 14, 9, 12, 5] as const;
+
+// Couleurs standard d'une cible : single black ou crème, double/triple rouge/vert,
+// alternance entre segments
+const COLOR_SINGLE_DARK = '#0E0E12';
+const COLOR_SINGLE_LIGHT = '#F0E6D2';
+const COLOR_RED = '#C8302B';
+const COLOR_GREEN = '#1E8246';
+const COLOR_BULL = '#1E8246';
+const COLOR_BULLSEYE = '#C8302B';
+
+interface Hit { score: number; ring: 'bullseye' | 'bull' | 'triple' | 'double' | 'single' | 'miss'; segment: number; x: number; y: number; }
 
 export const DartsGame: GameModule = {
   id: 'darts',
   apiId: 'darts',
   name: 'Fléchettes',
-  description: 'Tour par tour, 3 fléchettes chacun. Plus haut score sur 5 tours gagne.',
+  description: '501 façon Plato. Touche la cible, le score se soustrait jusqu\'à 0.',
   Component: DartsComponent,
 };
 
 function DartsComponent({ onFinish }: GameProps) {
-  const boardRef = useRef<HTMLDivElement | null>(null);
-  const [scores, setScores] = useState({ p1: 0, p2: 0 });
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const [scores, setScores] = useState({ p1: START_SCORE, p2: START_SCORE });
   const [turn, setTurn] = useState<1 | 2>(1);
-  const [dartsLeftInTurn, setDartsLeftInTurn] = useState(DARTS_PER_TURN);
-  const [completedTurns, setCompletedTurns] = useState({ p1: 0, p2: 0 });
-  const [hits, setHits] = useState<Hit[]>([]);
+  const [turnHits, setTurnHits] = useState<Hit[]>([]);   // hits du tour courant
+  const [allHits, setAllHits] = useState<Hit[]>([]);     // hits de toute la partie (visuels sur la cible)
   const [phase, setPhase] = useState<'playing' | 'done'>('playing');
+  const [busted, setBusted] = useState(false);
 
-  function throwDart(e: React.MouseEvent<HTMLDivElement>) {
+  function handleThrow(e: React.MouseEvent<SVGSVGElement> | React.TouchEvent<SVGSVGElement>) {
     if (phase !== 'playing') return;
-    const board = boardRef.current;
-    if (!board) return;
-    const rect = board.getBoundingClientRect();
-    // Coordonnées centrées sur le board (centre = 0,0)
-    const aimX = e.clientX - rect.left - BOARD_R;
-    const aimY = e.clientY - rect.top - BOARD_R;
-    const dx = (Math.random() - 0.5) * 2 * SPREAD;
-    const dy = (Math.random() - 0.5) * 2 * SPREAD;
-    const hitX = aimX + dx;
-    const hitY = aimY + dy;
-    const r = Math.hypot(hitX, hitY);
-    const score =
-      r <= 15  ? 50 :
-      r <= 40  ? 25 :
-      r <= 80  ? 10 :
-      r <= BOARD_R ? 5 : 0;
+    const svg = svgRef.current;
+    if (!svg) return;
+    const rect = svg.getBoundingClientRect();
+    let cx: number, cy: number;
+    if ('touches' in e) {
+      const t = e.touches[0] ?? e.changedTouches[0];
+      if (!t) return;
+      cx = t.clientX; cy = t.clientY;
+    } else {
+      cx = e.clientX; cy = e.clientY;
+    }
+    // Coordonnées SVG en unités viewBox (-1.05 .. 1.05)
+    const x = ((cx - rect.left) / rect.width)  * 2.1 - 1.05;
+    const y = ((cy - rect.top)  / rect.height) * 2.1 - 1.05;
+    const hit = scoreFromPoint(x, y);
 
-    const newHit: Hit = { x: hitX + BOARD_R, y: hitY + BOARD_R, score, player: turn, turn: completedTurns[turn === 1 ? 'p1' : 'p2'] + 1 };
-    const newHits = [...hits, newHit];
-    setHits(newHits);
-    setScores((sc) => ({ ...sc, [turn === 1 ? 'p1' : 'p2']: sc[turn === 1 ? 'p1' : 'p2'] + score }));
-    const left = dartsLeftInTurn - 1;
-    setDartsLeftInTurn(left);
-    if (left === 0) {
-      // Fin du tour pour ce joueur
-      const newCompleted = { ...completedTurns, [turn === 1 ? 'p1' : 'p2']: completedTurns[turn === 1 ? 'p1' : 'p2'] + 1 };
-      setCompletedTurns(newCompleted);
-      // Si chacun a fait ROUNDS tours, on termine
-      if (newCompleted.p1 >= ROUNDS && newCompleted.p2 >= ROUNDS) {
-        setPhase('done');
-        // setState async — on calcule le score final à partir de l'état que l'on s'apprête à poser
-        setTimeout(() => {
-          // Recompute sums depuis newHits pour éviter la stale closure
-          let p1 = 0, p2 = 0;
-          for (const h of newHits) (h.player === 1 ? p1 += h.score : p2 += h.score);
-          onFinish(p1, p2);
-        }, 800);
-        return;
-      }
-      // Sinon, on passe au joueur suivant
-      setTurn(turn === 1 ? 2 : 1);
-      setDartsLeftInTurn(DARTS_PER_TURN);
+    const myScoreKey = turn === 1 ? 'p1' : 'p2' as const;
+    const currentScore = scores[myScoreKey];
+    const newAllHits = [...allHits, { ...hit, x, y }];
+    setAllHits(newAllHits);
+
+    // BUST : si la fléchette fait passer en dessous de 0 → dart vaut 0, on
+    // tourne immédiatement au joueur suivant.
+    if (currentScore - hit.score < 0) {
+      setBusted(true);
+      setTimeout(() => {
+        setBusted(false);
+        setTurnHits([]);
+        setTurn(turn === 1 ? 2 : 1);
+      }, 1100);
+      return;
+    }
+
+    const newScore = currentScore - hit.score;
+    setScores((sc) => ({ ...sc, [myScoreKey]: newScore }));
+    const newTurnHits = [...turnHits, { ...hit, x, y }];
+    setTurnHits(newTurnHits);
+
+    // WIN : exactement 0
+    if (newScore === 0) {
+      setPhase('done');
+      // En 501 : winner=1, loser garde son score restant. On envoie comme score
+      // dans le match record : winner=START_SCORE, loser=START_SCORE - leur reste
+      // (ce qui revient à "points marqués"). Le winner a toujours plus de points
+      // donc l'invariant scoreP1>scoreP2 ↔ P1 wins est respecté.
+      setTimeout(() => {
+        const sc1 = turn === 1 ? START_SCORE : START_SCORE - scores.p1;
+        const sc2 = turn === 2 ? START_SCORE : START_SCORE - scores.p2;
+        onFinish(sc1, sc2);
+      }, 900);
+      return;
+    }
+
+    // Fin de tour après 3 darts
+    if (newTurnHits.length >= DARTS_PER_TURN) {
+      setTimeout(() => {
+        setTurnHits([]);
+        setTurn(turn === 1 ? 2 : 1);
+      }, 800);
     }
   }
 
-  const currentPlayerLabel = turn === 1 ? '🔴 Joueur 1' : '🔵 Joueur 2';
-  const currentPlayerColor = turn === 1 ? '#FF6B57' : '#5B8CFF';
-  const currentTurnNum = completedTurns[turn === 1 ? 'p1' : 'p2'] + 1;
+  const currentPlayer = turn === 1 ? 'p1' : 'p2';
+  const currentColor = turn === 1 ? '#FF6B57' : '#5B8CFF';
+  const currentLabel = turn === 1 ? '🔴 Joueur 1' : '🔵 Joueur 2';
+  const dartsLeftInTurn = DARTS_PER_TURN - turnHits.length;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-      <div style={{ display: 'flex', gap: 40, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 28 }}>
-        <span style={{ color: '#FF6B57' }}>🔴 {scores.p1}</span>
-        <span style={{ color: '#5B8CFF' }}>🔵 {scores.p2}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, width: '100%' }}>
+      {/* Score 501 → 0, en grand pour les deux joueurs */}
+      <div style={{ display: 'flex', width: '100%', maxWidth: 480, gap: 10 }}>
+        <PlayerCard label="J1 🔴" score={scores.p1} active={currentPlayer === 'p1' && phase === 'playing'} color="#FF6B57" />
+        <PlayerCard label="J2 🔵" score={scores.p2} active={currentPlayer === 'p2' && phase === 'playing'} color="#5B8CFF" />
       </div>
+
+      {/* Tour courant + 3 darts du tour */}
       {phase === 'playing' && (
-        <div style={{ color: currentPlayerColor, fontWeight: 600 }}>
-          {currentPlayerLabel} — Tour {currentTurnNum}/{ROUNDS} — {dartsLeftInTurn} fléchette{dartsLeftInTurn > 1 ? 's' : ''} restante{dartsLeftInTurn > 1 ? 's' : ''}
+        <div style={{ textAlign: 'center', minHeight: 38 }}>
+          {busted ? (
+            <div style={{ color: 'var(--loss)', fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26 }}>
+              BUST ! 💥
+            </div>
+          ) : (
+            <>
+              <div style={{ color: currentColor, fontWeight: 700, fontSize: 15 }}>
+                {currentLabel} — {dartsLeftInTurn} fléchette{dartsLeftInTurn > 1 ? 's' : ''} restante{dartsLeftInTurn > 1 ? 's' : ''}
+              </div>
+              <div style={{ display: 'flex', gap: 6, justifyContent: 'center', marginTop: 4 }}>
+                {[0, 1, 2].map((i) => (
+                  <span key={i} style={{
+                    minWidth: 44, textAlign: 'center', padding: '2px 8px',
+                    borderRadius: 8, fontWeight: 700, fontSize: 14,
+                    background: turnHits[i] ? 'var(--surface-2)' : 'transparent',
+                    border: '1px solid var(--line)',
+                    color: turnHits[i] ? 'var(--text)' : 'var(--muted)',
+                  }}>
+                    {turnHits[i] ? `−${turnHits[i].score}` : '—'}
+                  </span>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
-      {phase === 'done' && <div style={{ color: 'var(--muted)' }}>Partie terminée. Score envoyé…</div>}
+      {phase === 'done' && <div style={{ color: 'var(--win)', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22 }}>Terminé ! Score envoyé…</div>}
 
-      <div
-        ref={boardRef}
-        onClick={throwDart}
-        style={{
-          position: 'relative',
-          width: BOARD_R * 2, height: BOARD_R * 2,
-          borderRadius: '50%',
-          background: 'radial-gradient(circle at center, #D6FF3D 0 15px, #f5c542 15px 40px, #FF6B57 40px 80px, #2E4FCC 80px 150px, transparent 150px)',
-          border: '4px solid #0B0D10', cursor: phase === 'playing' ? 'crosshair' : 'default',
-          boxShadow: '0 8px 30px rgba(0,0,0,0.6)',
-        }}
-      >
-        {/* Centre */}
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', fontSize: 12, color: 'rgba(0,0,0,0.4)' }}>•</div>
-        {hits.map((h, i) => (
-          <div key={i} style={{
-            position: 'absolute', left: h.x - 5, top: h.y - 5,
-            width: 10, height: 10, borderRadius: '50%',
-            background: h.player === 1 ? '#FF6B57' : '#5B8CFF',
-            border: '2px solid white', pointerEvents: 'none',
-          }} title={`${h.score} pts`} />
-        ))}
-      </div>
+      {/* Vraie cible standard 20 segments */}
+      <Dartboard
+        svgRef={svgRef}
+        onThrow={handleThrow}
+        hits={allHits}
+        disabled={phase !== 'playing' || busted}
+      />
 
       <div style={{ color: 'var(--muted)', fontSize: 12.5, textAlign: 'center', maxWidth: 360, lineHeight: 1.5 }}>
-        Bullseye 🟡 = 50 · Anneau jaune = 25 · Rouge = 10 · Bleu = 5 · Dehors = 0<br />
-        Vise précisément — ta fléchette atterrira à ±{SPREAD}px du clic.
+        Touche la cible — bullseye <strong style={{ color: COLOR_BULLSEYE }}>50</strong>,
+        bull <strong style={{ color: COLOR_BULL }}>25</strong>,
+        triple <strong>×3</strong>, double <strong>×2</strong>.<br />
+        Premier à <strong>exactement 0</strong> gagne. Passer en dessous = BUST.
       </div>
     </div>
   );
+}
+
+function PlayerCard({ label, score, active, color }: { label: string; score: number; active: boolean; color: string }) {
+  return (
+    <div style={{
+      flex: 1, padding: '10px 14px', borderRadius: 14,
+      background: active ? 'color-mix(in oklab, var(--accent) 16%, var(--surface))' : 'var(--surface)',
+      border: `2px solid ${active ? 'var(--accent)' : 'var(--line)'}`,
+      textAlign: 'center',
+      transition: 'background .15s ease, border-color .15s ease',
+    }}>
+      <div style={{ color, fontWeight: 700, fontSize: 13, letterSpacing: 0.5 }}>{label}</div>
+      <div className="tabular" style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 44, lineHeight: 1, marginTop: 4 }}>
+        {score}
+      </div>
+    </div>
+  );
+}
+
+// ─── Cible SVG ────────────────────────────────────────────────────────────
+function Dartboard({ svgRef, onThrow, hits, disabled }: {
+  svgRef: React.RefObject<SVGSVGElement>;
+  onThrow: (e: React.MouseEvent<SVGSVGElement> | React.TouchEvent<SVGSVGElement>) => void;
+  hits: Hit[];
+  disabled: boolean;
+}) {
+  // 20 segments × 4 zones (single-out, double, triple, single-in)
+  const segments: React.ReactNode[] = [];
+  for (let i = 0; i < 20; i++) {
+    const segValue = SEGMENTS[i];
+    const isOdd = i % 2 === 1;
+    const angStart = -90 + i * 18 - 9;
+    const angEnd   = -90 + i * 18 + 9;
+    // single-in (entre bull et triple)
+    segments.push(
+      <path key={`si-${i}`} d={ringPath(R_BULL, R_TRIPLE_IN, angStart, angEnd)}
+        fill={isOdd ? COLOR_SINGLE_LIGHT : COLOR_SINGLE_DARK} />,
+    );
+    // triple
+    segments.push(
+      <path key={`t-${i}`} d={ringPath(R_TRIPLE_IN, R_TRIPLE_OUT, angStart, angEnd)}
+        fill={isOdd ? COLOR_GREEN : COLOR_RED} />,
+    );
+    // single-out (entre triple et double)
+    segments.push(
+      <path key={`so-${i}`} d={ringPath(R_TRIPLE_OUT, R_DOUBLE_IN, angStart, angEnd)}
+        fill={isOdd ? COLOR_SINGLE_LIGHT : COLOR_SINGLE_DARK} />,
+    );
+    // double
+    segments.push(
+      <path key={`d-${i}`} d={ringPath(R_DOUBLE_IN, R_DOUBLE_OUT, angStart, angEnd)}
+        fill={isOdd ? COLOR_GREEN : COLOR_RED} />,
+    );
+    // numéro du segment
+    const angMid = -90 + i * 18;
+    const rText = 1.085;
+    const tx = rText * Math.cos(angMid * Math.PI / 180);
+    const ty = rText * Math.sin(angMid * Math.PI / 180);
+    segments.push(
+      <text key={`n-${i}`} x={tx} y={ty} fill="white" fontSize={0.10} fontWeight={800}
+        textAnchor="middle" dominantBaseline="central" style={{ userSelect: 'none', pointerEvents: 'none' }}>
+        {segValue}
+      </text>,
+    );
+  }
+
+  return (
+    <div style={{ width: '100%', maxWidth: 560, aspectRatio: '1 / 1', position: 'relative' }}>
+      <svg
+        ref={svgRef}
+        viewBox="-1.15 -1.15 2.3 2.3"
+        onClick={onThrow}
+        onTouchStart={(e) => { e.preventDefault(); onThrow(e); }}
+        style={{
+          width: '100%', height: '100%', display: 'block',
+          touchAction: 'none',
+          cursor: disabled ? 'wait' : 'crosshair',
+          opacity: disabled ? 0.7 : 1,
+        }}
+      >
+        {/* Anneau extérieur noir (bordure du board) */}
+        <circle cx="0" cy="0" r="1.13" fill="#0B0B0E" />
+        {/* Numéros sur le bord noir */}
+        {segments}
+        {/* Bull (vert 25) */}
+        <circle cx="0" cy="0" r={R_BULL} fill={COLOR_BULL} />
+        {/* Bullseye (rouge 50) */}
+        <circle cx="0" cy="0" r={R_BULLSEYE} fill={COLOR_BULLSEYE} />
+
+        {/* Impacts précédents — petits cercles blancs avec bordure */}
+        {hits.map((h, i) => (
+          <g key={i}>
+            <circle cx={h.x} cy={h.y} r={0.022} fill="white" stroke="#000" strokeWidth={0.006} />
+            <line x1={h.x - 0.018} y1={h.y - 0.018} x2={h.x + 0.018} y2={h.y + 0.018}
+              stroke="#666" strokeWidth={0.005} />
+          </g>
+        ))}
+      </svg>
+    </div>
+  );
+}
+
+// Path SVG d'un segment d'anneau entre 2 rayons et 2 angles (en degrés)
+function ringPath(rIn: number, rOut: number, angStartDeg: number, angEndDeg: number): string {
+  const a1 = angStartDeg * Math.PI / 180;
+  const a2 = angEndDeg * Math.PI / 180;
+  const xIn1 = rIn * Math.cos(a1), yIn1 = rIn * Math.sin(a1);
+  const xIn2 = rIn * Math.cos(a2), yIn2 = rIn * Math.sin(a2);
+  const xOut1 = rOut * Math.cos(a1), yOut1 = rOut * Math.sin(a1);
+  const xOut2 = rOut * Math.cos(a2), yOut2 = rOut * Math.sin(a2);
+  return `M ${xIn1} ${yIn1} L ${xOut1} ${yOut1} A ${rOut} ${rOut} 0 0 1 ${xOut2} ${yOut2} L ${xIn2} ${yIn2} A ${rIn} ${rIn} 0 0 0 ${xIn1} ${yIn1} Z`;
+}
+
+// Calcul du score à partir d'un point (x, y) dans le viewBox de la cible.
+// y positif = bas (convention SVG).
+function scoreFromPoint(x: number, y: number): { score: number; ring: Hit['ring']; segment: number } {
+  const dist = Math.hypot(x, y);
+  if (dist > R_DOUBLE_OUT) return { score: 0, ring: 'miss', segment: 0 };
+  if (dist <= R_BULLSEYE)  return { score: 50, ring: 'bullseye', segment: 50 };
+  if (dist <= R_BULL)      return { score: 25, ring: 'bull', segment: 25 };
+
+  // Angle en degrés, 0° = top, sens horaire (donc atan2(x, -y))
+  let angle = Math.atan2(x, -y) * 180 / Math.PI;
+  if (angle < 0) angle += 360;
+  // Chaque segment = 18° de large, segment 20 centré sur 0°
+  const segIdx = Math.floor(((angle + 9) % 360) / 18) % 20;
+  const segValue = SEGMENTS[segIdx];
+
+  if (dist > R_DOUBLE_IN  && dist <= R_DOUBLE_OUT)  return { score: segValue * 2, ring: 'double', segment: segValue };
+  if (dist > R_TRIPLE_IN  && dist <= R_TRIPLE_OUT)  return { score: segValue * 3, ring: 'triple', segment: segValue };
+  return { score: segValue, ring: 'single', segment: segValue };
 }
