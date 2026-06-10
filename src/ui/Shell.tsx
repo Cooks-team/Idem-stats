@@ -6,6 +6,7 @@ import { Avatar } from './Avatar';
 import { useAuth } from '../auth/AuthContext';
 import { absoluteAvatar } from '../api/client';
 import { InboxBell } from './InboxBell';
+import { BreakingNewsTicker } from './BreakingNewsTicker';
 import { useEvents } from '../realtime/useEvents';
 
 // Shell desktop + mobile : Sidebar (drawer sur mobile) + Topbar + Content.
@@ -73,6 +74,9 @@ export function Shell({ title, subtitle, children, onBack, action }: {
       />
 
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        {/* Ticker breaking-news global : sticky top, visible sur toutes les pages.
+            Se masque tout seul s'il n'y a pas de 5-0 dans la dernière heure. */}
+        <BreakingNewsTicker />
         <header className="topbar">
           <button className="burger" onClick={() => setDrawerOpen((v) => !v)} aria-label="Menu">
             <Icon name="grid" size={20} />
