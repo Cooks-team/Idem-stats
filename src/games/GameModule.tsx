@@ -10,6 +10,15 @@ export interface GameProps {
   // pour afficher le pseudo et la photo sur les éléments contrôlés (paddle babyfoot, etc.)
   player1?: { pseudo?: string; avatarUrl?: string | null };
   player2?: { pseudo?: string; avatarUrl?: string | null };
+  // Mode multiplayer pour les jeux temps réel via SSE relay :
+  //  - 'local' : 2 joueurs sur le même clavier (comportement par défaut, hub games)
+  //  - 'host'  : je suis player1 d'un match remote → je fais tourner la simulation
+  //              et je broadcast l'état au guest. Mes inputs me bougent localement.
+  //  - 'guest' : je suis player2 d'un match remote → je n'exécute pas la simu,
+  //              je reçois l'état du host et je rends, et j'envoie mes inputs.
+  // Si le jeu ne supporte pas le multiplayer, il ignore ces props et reste local.
+  mode?: 'local' | 'host' | 'guest';
+  matchId?: string;
 }
 
 export interface GameModule {

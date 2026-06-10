@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { API_BASE_URL, readPersistedToken } from '../api/client';
+import { playEmitter } from './playEvents';
 
 // EventSource sur /events?token=<JWT>. Reconnexion auto en cas de coupure
 // (gérée nativement par EventSource via le header "retry"). Sur chaque event
@@ -46,9 +47,25 @@ export function useEvents(enabled: boolean) {
       return [t, fn] as const;
     });
 
+    // Events temps réel des jeux remote (input du guest / state du host).
+    // Ne pas passer par TanStack Query — on push directement à l'émetteur
+    // global utilisé par useRemoteGameSync.
+    const playInputFn = (ev: MessageEvent) => {
+      const data = tryParse(ev.data) as { matchId?: string; payload?: unknown } | null;
+      if (data?.matchId) playEmitter.emit({ type: 'input', matchId: data.matchId, payload: data.payload });
+    };
+    const playStateFn = (ev: MessageEvent) => {
+      const data = tryParse(ev.data) as { matchId?: string; payload?: unknown } | null;
+      if (data?.matchId) playEmitter.emit({ type: 'state', matchId: data.matchId, payload: data.payload });
+    };
+    es.addEventListener('match.play.input', playInputFn as EventListener);
+    es.addEventListener('match.play.state', playStateFn as EventListener);
+
     return () => {
       es.removeEventListener('message', onMessage);
       listeners.forEach(([t, fn]) => es.removeEventListener(t, fn as EventListener));
+      es.removeEventListener('match.play.input', playInputFn as EventListener);
+      es.removeEventListener('match.play.state', playStateFn as EventListener);
       es.close();
     };
   }, [enabled, qc]);

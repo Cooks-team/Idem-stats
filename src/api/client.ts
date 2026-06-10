@@ -130,4 +130,12 @@ export const api = {
 
   // Wall of shame : latest 5-0 + ranking des joueurs qui en ont pris le plus
   wallOfShame: () => call<WallOfShameResponse>('/wall-of-shame'),
+
+  // Sync temps réel pour les jeux remote (host-authoritative).
+  // sendPlayInput : envoyé par le guest, reçu par le host via SSE
+  // sendPlayState : envoyé par le host, reçu par le guest via SSE
+  sendPlayInput: (matchId: string, payload: unknown) =>
+    call<{ ok: true }>(`/matches/${matchId}/play/input`, { method: 'POST', body: JSON.stringify({ payload }) }),
+  sendPlayState: (matchId: string, payload: unknown) =>
+    call<{ ok: true }>(`/matches/${matchId}/play/state`, { method: 'POST', body: JSON.stringify({ payload }) }),
 };
