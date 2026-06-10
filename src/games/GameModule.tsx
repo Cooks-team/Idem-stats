@@ -36,6 +36,7 @@ import { DartsGame } from './DartsGame';
 import { BabyfootGame } from './BabyfootGame';
 import { BilliardsGame } from './BilliardsGame';
 import { ChessGame } from './ChessGame';
+import { KartGame } from './kart/KartGame';
 
 export const GAME_MODULES: GameModule[] = [
   ClickerGame,
@@ -45,6 +46,7 @@ export const GAME_MODULES: GameModule[] = [
   BabyfootGame,
   BilliardsGame,
   ChessGame,
+  KartGame,
 ];
 
 export function moduleById(id: string): GameModule | undefined {
