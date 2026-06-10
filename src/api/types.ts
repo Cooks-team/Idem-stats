@@ -57,6 +57,13 @@ export interface FriendsResponse {
   outgoing: FriendshipRow[];
 }
 
+export interface InboxResponse {
+  friendRequests: Array<{ id: string; createdAt: string; user: User }>;
+  matchInvites: Match[];
+  shifumiPendingPicks: Match[];
+  total: number;
+}
+
 export interface Match {
   id: string;
   game: string;
