@@ -391,9 +391,25 @@ function ShifumiRemotePending({ match: m }: { match: Match }) {
       🎯 Enjeu : {meta.condition}
     </div>
   );
-  const headerRound = (meta.round ?? 1) > 1 && (
+  // Pour BO3/BO5 : score de la série + manche courante. Le `round` interne
+  // peut inclure des égalités (rerun) — on affiche aussi la manche "utile"
+  // (sériesP1 + sériesP2 + 1) pour comprendre où on en est.
+  const bestOf = meta.bestOf ?? 1;
+  const seriesP1 = meta.seriesP1 ?? 0;
+  const seriesP2 = meta.seriesP2 ?? 0;
+  const headerSeries = bestOf > 1 && (
+    <div style={{ marginBottom: 10, fontFamily: 'var(--font-display)', fontWeight: 700 }}>
+      <span style={{ color: 'var(--muted)', fontSize: 12, letterSpacing: 0.5 }}>BO{bestOf} · Manche {seriesP1 + seriesP2 + 1}/{bestOf}</span>
+      <div style={{ marginTop: 4, fontSize: 28 }}>
+        <span style={{ color: 'var(--loss)' }}>{seriesP1}</span>
+        <span style={{ color: 'var(--muted)', margin: '0 12px' }}>—</span>
+        <span style={{ color: 'var(--blue)' }}>{seriesP2}</span>
+      </div>
+    </div>
+  );
+  const headerRound = (meta.round ?? 1) > 1 && (meta.history?.filter(h => h.tie).length ?? 0) > 0 && (
     <div style={{ marginBottom: 10, color: 'var(--muted)', fontSize: 12.5 }}>
-      Round {meta.round} · {meta.history?.length ?? 0} égalité{(meta.history?.length ?? 0) > 1 ? 's' : ''}
+      {meta.history?.filter(h => h.tie).length ?? 0} égalité{(meta.history?.filter(h => h.tie).length ?? 0) > 1 ? 's' : ''} relancée{(meta.history?.filter(h => h.tie).length ?? 0) > 1 ? 's' : ''}
     </div>
   );
 
@@ -402,6 +418,7 @@ function ShifumiRemotePending({ match: m }: { match: Match }) {
     return (
       <div className="panel" style={{ padding: 40, textAlign: 'center' }}>
         {headerCondition}
+        {headerSeries}
         {headerRound}
         <div style={{ color: 'var(--muted)', fontSize: 13 }}>Ton choix (secret)</div>
         <div style={{ fontSize: 96, lineHeight: 1, marginTop: 6 }}>{SHIFUMI_EMOJIS[myPick]}</div>

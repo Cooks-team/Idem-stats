@@ -318,11 +318,12 @@ function ShifumiRemoteForm({
 }) {
   const [myPick, setMyPick] = useState<ShifumiPick | null>(null);
   const [condition, setCondition] = useState('');
+  const [bestOf, setBestOf] = useState<1 | 3 | 5>(1);
   const mut = useMutation({
     mutationFn: () => {
       if (!myPick) throw new Error('missing_pick');
       if (opponent.trim().length < 3) throw new Error('opponent_required');
-      return api.createShifumiRemote(opponent.trim(), myPick, condition.trim() || undefined);
+      return api.createShifumiRemote(opponent.trim(), myPick, condition.trim() || undefined, bestOf);
     },
     onSuccess,
     onError: (e) => setError(humanize(e)),
@@ -335,7 +336,21 @@ function ShifumiRemoteForm({
         value={opponent}
         onChange={(e) => setOpponent(e.target.value)}
       />
-      <div className="eyebrow"><span className="label">Ton choix (secret jusqu'au reveal)</span></div>
+      <div className="eyebrow"><span className="label">Format</span></div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {[1, 3, 5].map((n) => (
+          <button
+            key={n}
+            type="button"
+            className={`chip ${bestOf === n ? 'active accent' : ''}`}
+            onClick={() => setBestOf(n as 1 | 3 | 5)}
+          >{n === 1 ? '1 manche' : `BO${n}`}</button>
+        ))}
+      </div>
+      <div style={{ color: 'var(--muted)', fontSize: 12 }}>
+        {bestOf === 1 ? 'Une seule manche.' : `Premier à ${Math.ceil(bestOf / 2)} manches remporte la série.`}
+      </div>
+      <div className="eyebrow"><span className="label">Ton choix de la 1<sup>re</sup> manche (secret)</span></div>
       <PickRow value={myPick} onChange={setMyPick} />
       <div className="eyebrow" style={{ marginTop: 8 }}><span className="label">Condition du duel (optionnel)</span></div>
       <Field

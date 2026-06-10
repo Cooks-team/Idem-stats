@@ -32,6 +32,10 @@ export interface ShifumiMetadata {
   lastTieRound?: number;              // = round qui vient de se conclure en égalité
   // Enjeu du duel ("celui qui perd paye"…), max 200 chars, visible des deux côtés
   condition?: string;
+  // Série BO3/BO5 (remote uniquement). Défaut bestOf=1 (1 manche unique).
+  bestOf?: 1 | 3 | 5;
+  seriesP1?: number;
+  seriesP2?: number;
 }
 
 export interface ShifumiRoundEntry {
