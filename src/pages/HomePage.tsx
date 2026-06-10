@@ -43,8 +43,14 @@ export function HomePage() {
         ? `${shame?.totalEvents ?? 0} fessées au Basket Random`
         : `${entries.length} joueurs · ${totalPlayed} parties`}
     >
-      {/* Breaking news : dernier 5-0 Basket Random, affiché en haut quel que soit l'onglet */}
-      {shame?.latest && <BreakingNews latest={shame.latest} onOpenShame={() => setTab('shame')} />}
+      {/* Breaking news statique : dernier 5-0/6-0 Basket Random, MAIS uniquement
+          s'il a eu lieu dans les 2 dernières heures. Au-delà, on cache → la
+          news n'est plus "breaking", elle est juste vieille. Le ticker
+          animé en haut du Shell garde sa propre fenêtre (1h, contrôlée
+          côté API via /wall-of-shame.recent). */}
+      {shame?.latest && isWithinHours(shame.latest.match.finishedAt, 2) && (
+        <BreakingNews latest={shame.latest} onOpenShame={() => setTab('shame')} />
+      )}
 
       {/* Toggle Classement / Wall of shame */}
       <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
@@ -106,6 +112,15 @@ function BreakingNews({ latest, onOpenShame }: {
       <style>{`@keyframes pulseShame { 0%,100% { box-shadow: 0 4px 14px rgba(0,0,0,0.4); } 50% { box-shadow: 0 4px 24px color-mix(in srgb, var(--loss) 70%, transparent); } }`}</style>
     </div>
   );
+}
+
+// Vrai si l'event est dans les N dernières heures. Tolère iso null/invalide
+// en renvoyant false → on n'affiche pas si on ne sait pas dater.
+function isWithinHours(iso: string | null, hours: number): boolean {
+  if (!iso) return false;
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return false;
+  return Date.now() - t < hours * 3600 * 1000;
 }
 
 function timeAgo(iso: string | null): string {
