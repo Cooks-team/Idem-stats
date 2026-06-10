@@ -30,8 +30,9 @@ const FLIP_DURATION_MS = 2400;
 const FLIP_RESULT_DELAY_MS = 1600;
 
 type Group = 'solid' | 'stripe';
-type Phase = 'coinflip' | 'flipresult' | 'aim' | 'shooting' | 'done';
+type Phase = 'choosing' | 'coinflip' | 'flipresult' | 'aim' | 'shooting' | 'done';
 type Owner = Group | 'eight';
+type CoinSide = 'pile' | 'face';
 
 interface V2 { x: number; y: number }
 interface Ball {
@@ -124,7 +125,8 @@ export const BilliardsGame: GameModule = {
 function BilliardsComponent({ onFinish }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stateRef = useRef<{ balls: Ball[]; aim: V2 | null }>({ balls: initBalls(), aim: null });
-  const [phase, setPhase] = useState<Phase>('coinflip');
+  // Démarre sur 'choosing' : J1 choisit pile ou face avant le flip
+  const [phase, setPhase] = useState<Phase>('choosing');
   const [currentPlayer, setCurrentPlayer] = useState<1 | 2>(1);
   const [scores, setScores] = useState({ p1: 0, p2: 0 });
   const [groups, setGroups] = useState<{ p1?: Group; p2?: Group }>({});
@@ -132,22 +134,47 @@ function BilliardsComponent({ onFinish }: GameProps) {
   // Tracking de l'animation pile ou face
   const flipStartRef = useRef<number>(0);
   const flipResultRef = useRef<1 | 2 | null>(null);
+  // Choix du joueur (J1 par convention) et résultat réel du tirage
+  const [chosenSide, setChosenSide] = useState<CoinSide | null>(null);
+  const flippedSideRef = useRef<CoinSide>('pile');
   // Raison de fin de partie pour le message
   const [endReason, setEndReason] = useState<'eight_correct' | 'eight_wrong' | 'normal'>('normal');
   const [endWinner, setEndWinner] = useState<1 | 2 | null>(null);
 
-  // ─ Pile ou face initial ─────────────────────────────────────────────────
-  // Lance un rAF pour animer le flip, puis transitionne phase=flipresult
-  // (affichage du gagnant), puis phase=aim (départ de la partie).
+  // ─ Phase 'choosing' : on affiche juste la table verte avec la pièce posée
+  //   en attendant que J1 clique Pile ou Face. Le dessin se fait via le UI
+  //   React au-dessous (boutons), pas dans le canvas.
+  useEffect(() => {
+    if (phase !== 'choosing') return;
+    drawChoosing(canvasRef);
+  }, [phase]);
+
+  function callCoin(side: CoinSide) {
+    if (phase !== 'choosing') return;
+    setChosenSide(side);
+    // Tirage réel : pile = J1 gagne, face = J2 gagne (convention arbitraire).
+    // Le côté tiré au sort est indépendant du choix de J1 — J1 a 50% de
+    // tomber juste.
+    const tirage: CoinSide = Math.random() < 0.5 ? 'pile' : 'face';
+    flippedSideRef.current = tirage;
+    // J1 gagne s'il a deviné juste
+    const winner: 1 | 2 = side === tirage ? 1 : 2;
+    flipResultRef.current = winner;
+    setPhase('coinflip');
+  }
+
+  // ─ Pile ou face : animation ─────────────────────────────────────────────
+  // Lance un rAF pour animer le flip. La face finale = flippedSideRef (tiré
+  // au sort à la frame de l'appel). Le winner sortant est figé via setCurrentPlayer.
   useEffect(() => {
     if (phase !== 'coinflip') return;
     flipStartRef.current = performance.now();
-    const winner: 1 | 2 = Math.random() < 0.5 ? 1 : 2;
-    flipResultRef.current = winner;
+    const winner = flipResultRef.current ?? 1;
+    const finalSide = flippedSideRef.current;
     let raf = 0;
     const tick = () => {
       const elapsed = performance.now() - flipStartRef.current;
-      drawCoinFlip(canvasRef, elapsed, winner);
+      drawCoinFlip(canvasRef, elapsed, finalSide, chosenSide ?? 'pile');
       if (elapsed < FLIP_DURATION_MS) {
         raf = requestAnimationFrame(tick);
       } else {
@@ -157,12 +184,12 @@ function BilliardsComponent({ onFinish }: GameProps) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [phase]);
+  }, [phase, chosenSide]);
 
   // Affiche le résultat du flip pendant ~1.6s puis bascule en aim
   useEffect(() => {
     if (phase !== 'flipresult') return;
-    drawFlipResult(canvasRef, flipResultRef.current ?? 1);
+    drawFlipResult(canvasRef, flipResultRef.current ?? 1, flippedSideRef.current, chosenSide ?? 'pile');
     const t = window.setTimeout(() => {
       setPhase('aim');
       redraw();
@@ -375,8 +402,34 @@ function BilliardsComponent({ onFinish }: GameProps) {
         </span>
       </div>
 
-      {phase === 'coinflip' && (
-        <div style={{ color: 'var(--muted)', fontSize: 14 }}>Pile ou face… qui commence ?</div>
+      {phase === 'choosing' && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 18, color: '#FF6B57' }}>
+            🔴 Joueur 1, à toi de choisir :
+          </div>
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button
+              type="button"
+              className="btn btn-accent btn-lg"
+              onClick={() => callCoin('pile')}
+              style={{ minWidth: 120, fontSize: 18 }}
+            >🪙 PILE</button>
+            <button
+              type="button"
+              className="btn btn-accent btn-lg"
+              onClick={() => callCoin('face')}
+              style={{ minWidth: 120, fontSize: 18 }}
+            >🪙 FACE</button>
+          </div>
+          <div style={{ color: 'var(--muted)', fontSize: 12.5, textAlign: 'center', maxWidth: 360 }}>
+            Si tu devines juste, tu commences. Sinon, c'est ton adversaire qui ouvre.
+          </div>
+        </div>
+      )}
+      {phase === 'coinflip' && chosenSide && (
+        <div style={{ color: 'var(--muted)', fontSize: 14 }}>
+          J1 a appelé <strong style={{ color: '#FF6B57' }}>{chosenSide.toUpperCase()}</strong>… on tire !
+        </div>
       )}
       {phase === 'flipresult' && (
         <div style={{ color: turnColor, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22 }}>
@@ -483,10 +536,51 @@ function stepBalls(balls: Ball[]) {
 }
 
 // ─ Dessin pile ou face animé ─────────────────────────────────────────────
-function drawCoinFlip(canvasRef: React.RefObject<HTMLCanvasElement>, elapsed: number, winner: 1 | 2) {
+function drawChoosing(canvasRef: React.RefObject<HTMLCanvasElement>) {
   const c = canvasRef.current; if (!c) return;
   const ctx = c.getContext('2d'); if (!ctx) return;
-  // Fond table verte (cohérence visuelle)
+  // Table verte
+  ctx.fillStyle = '#0E693A';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#5B3A1F';
+  ctx.fillRect(0, 0, W, CUSHION);
+  ctx.fillRect(0, H - CUSHION, W, CUSHION);
+  ctx.fillRect(0, 0, CUSHION, H);
+  ctx.fillRect(W - CUSHION, 0, CUSHION, H);
+
+  // Pièce posée au centre avec un léger glow d'attente
+  const cx = W / 2, cy = H / 2;
+  const coinR = 56;
+  // Halo doré pulsant léger (basé sur Date pas dispo dans rAF, on prend juste un cercle simple)
+  ctx.fillStyle = 'rgba(255, 215, 0, 0.12)';
+  ctx.beginPath(); ctx.arc(cx, cy, coinR + 24, 0, Math.PI * 2); ctx.fill();
+  // Ombre
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath(); ctx.ellipse(cx, cy + coinR + 18, coinR * 0.85, 7, 0, 0, Math.PI * 2); ctx.fill();
+  // Pièce (montrant PILE par défaut au repos)
+  const grad = ctx.createRadialGradient(cx - coinR * 0.3, cy - coinR * 0.4, 5, cx, cy, coinR);
+  grad.addColorStop(0, '#FFEB7A');
+  grad.addColorStop(1, '#C49B22');
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.arc(cx, cy, coinR, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#7A5E16'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.fillStyle = '#3D2D08';
+  ctx.font = 'bold 28px var(--font-display, sans-serif)';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('?', cx, cy);
+
+  // Bandeau supérieur
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, CUSHION, W, 36);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 18px var(--font-display, sans-serif)';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('À toi de choisir !', W / 2, CUSHION + 18);
+}
+
+function drawCoinFlip(canvasRef: React.RefObject<HTMLCanvasElement>, elapsed: number, finalSide: CoinSide, chosen: CoinSide) {
+  const c = canvasRef.current; if (!c) return;
+  const ctx = c.getContext('2d'); if (!ctx) return;
   ctx.fillStyle = '#0E693A';
   ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = '#5B3A1F';
@@ -498,15 +592,14 @@ function drawCoinFlip(canvasRef: React.RefObject<HTMLCanvasElement>, elapsed: nu
   // Pièce qui flip : scaleY oscille selon le cosinus, fréquence = 8 flips total
   const flipsTotal = 8;
   const t = Math.min(1, elapsed / FLIP_DURATION_MS);
-  const easedT = 1 - Math.pow(1 - t, 2.2); // ease-out : on ralentit en fin de flip
+  const easedT = 1 - Math.pow(1 - t, 2.2);
   const scaleY = Math.abs(Math.cos(easedT * Math.PI * flipsTotal));
-  // Détermine quelle face est visible
   const flipIndex = Math.floor(easedT * flipsTotal * 2);
-  // En fin de flip, on force la face du winner
+  // En fin de flip on force la face TIRÉE (finalSide), pas celle du winner.
+  // C'est la suspense honnête : on voit pile ou face vraiment tomber.
   const showWinnerFace = t > 0.93;
-  // Convention : pile = winner 1, face = winner 2 (arbitraire)
   const showingPile = showWinnerFace
-    ? winner === 1
+    ? finalSide === 'pile'
     : flipIndex % 2 === 0;
 
   const cx = W / 2, cy = H / 2;
@@ -543,16 +636,16 @@ function drawCoinFlip(canvasRef: React.RefObject<HTMLCanvasElement>, elapsed: nu
   ctx.fillText(showingPile ? 'PILE' : 'FACE', 0, 0);
   ctx.restore();
 
-  // Bandeau supérieur
+  // Bandeau supérieur — montre le choix de J1 pendant le flip
   ctx.fillStyle = 'rgba(0,0,0,0.45)';
   ctx.fillRect(0, CUSHION, W, 36);
   ctx.fillStyle = '#fff';
   ctx.font = 'bold 18px var(--font-display, sans-serif)';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillText('Pile ou face…', W / 2, CUSHION + 18);
+  ctx.fillText(`J1 a appelé ${chosen.toUpperCase()}…`, W / 2, CUSHION + 18);
 }
 
-function drawFlipResult(canvasRef: React.RefObject<HTMLCanvasElement>, winner: 1 | 2) {
+function drawFlipResult(canvasRef: React.RefObject<HTMLCanvasElement>, winner: 1 | 2, finalSide: CoinSide, chosen: CoinSide) {
   const c = canvasRef.current; if (!c) return;
   const ctx = c.getContext('2d'); if (!ctx) return;
   ctx.fillStyle = '#0E693A';
@@ -563,8 +656,8 @@ function drawFlipResult(canvasRef: React.RefObject<HTMLCanvasElement>, winner: 1
   ctx.fillRect(0, 0, CUSHION, H);
   ctx.fillRect(W - CUSHION, 0, CUSHION, H);
 
-  // Pièce immobile (face du winner)
-  const showingPile = winner === 1;
+  // Pièce immobile (face réellement tirée)
+  const showingPile = finalSide === 'pile';
   const cx = W / 2, cy = H / 2;
   const coinR = 56;
   ctx.fillStyle = 'rgba(0,0,0,0.35)';
@@ -580,13 +673,25 @@ function drawFlipResult(canvasRef: React.RefObject<HTMLCanvasElement>, winner: 1
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.fillText(showingPile ? 'PILE' : 'FACE', cx, cy);
 
+  // Verdict : juste / raté
+  const guessed = chosen === finalSide;
+  const verdictColor = guessed ? '#3DD68C' : '#FF6B57';
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, cy - coinR - 70, W, 38);
+  ctx.fillStyle = verdictColor;
+  ctx.font = 'bold 20px var(--font-display, sans-serif)';
+  ctx.fillText(
+    guessed ? `Bien deviné ! ${chosen.toUpperCase()} pour J1` : `Raté — c'était ${finalSide.toUpperCase()}`,
+    W / 2, cy - coinR - 50,
+  );
+
   // Annonce du vainqueur
   const wColor = winner === 1 ? '#FF6B57' : '#5B8CFF';
   ctx.fillStyle = 'rgba(0,0,0,0.55)';
-  ctx.fillRect(0, H / 2 - coinR - 70, W, 40);
+  ctx.fillRect(0, cy + coinR + 38, W, 36);
   ctx.fillStyle = wColor;
-  ctx.font = 'bold 22px var(--font-display, sans-serif)';
-  ctx.fillText(`${winner === 1 ? '🔴' : '🔵'} Joueur ${winner} commence !`, W / 2, H / 2 - coinR - 50);
+  ctx.font = 'bold 18px var(--font-display, sans-serif)';
+  ctx.fillText(`${winner === 1 ? '🔴' : '🔵'} Joueur ${winner} commence !`, W / 2, cy + coinR + 56);
 }
 
 // ─ Dessin table + boules ────────────────────────────────────────────────
