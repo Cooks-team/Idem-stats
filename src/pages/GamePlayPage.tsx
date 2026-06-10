@@ -8,6 +8,7 @@ import { absoluteAvatar, api } from '../api/client';
 import type { Match } from '../api/types';
 import { moduleById } from '../games/GameModule';
 import { reportScore } from '../games/reportScore';
+import { PseudoAutocomplete } from '../ui/PseudoAutocomplete';
 
 type Phase = 'setup' | 'playing' | 'done';
 
@@ -116,12 +117,12 @@ export function GamePlayPage() {
             <div className="eyebrow">
               <span className="label">{friends.length > 0 ? 'Ou par pseudo' : 'Adversaire'}</span>
             </div>
-            <Field
+            <PseudoAutocomplete
               label="Adversaire"
               placeholder="pseudo (compte existant)"
               value={opponent}
-              onChange={(e) => setOpponent(e.target.value)}
-              onKeyDown={(e) => e.key === 'Enter' && opponent.trim().length >= 3 && createMut.mutate(opponent.trim())}
+              onChange={setOpponent}
+              onEnter={() => opponent.trim().length >= 3 && createMut.mutate(opponent.trim())}
             />
             {error && <div style={{ color: 'var(--loss)', fontSize: 13 }}>{error}</div>}
             <button

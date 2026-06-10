@@ -9,6 +9,7 @@ import { Field } from '../ui/Field';
 import { Icon } from '../ui/Icon';
 import { Avatar } from '../ui/Avatar';
 import { KNOWN_GAMES } from '../games/registry';
+import { PseudoAutocomplete } from '../ui/PseudoAutocomplete';
 
 type Mode = 'create' | 'join';
 type ShifumiMode = 'irl' | 'remote';
@@ -148,11 +149,11 @@ export function NewMatchPage() {
                 </>
               ) : (
                 <>
-                  <Field
-                    label="Adversaire (laisse vide pour un match avec code)"
-                    placeholder="pseudo"
+                  <PseudoAutocomplete
+                    label="Adversaire"
+                    placeholder="pseudo (compte existant)"
                     value={opponent}
-                    onChange={(e) => { setOpponent(e.target.value); setError(null); }}
+                    onChange={(v) => { setOpponent(v); setError(null); }}
                   />
                   {opponent.trim().length > 0 && (
                     <div style={{ display: 'flex', gap: 8 }}>
@@ -479,7 +480,7 @@ function CodeReveal({ code }: { code: string }) {
     navigator.clipboard.writeText(text).then(() => {
       setCopied(what);
       setTimeout(() => setCopied(null), 1500);
-    }).catch(() => {});
+    }).catch(() => { });
   };
   return (
     <div>

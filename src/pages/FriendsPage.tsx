@@ -6,6 +6,7 @@ import { Shell } from '../ui/Shell';
 import { Avatar } from '../ui/Avatar';
 import { Field } from '../ui/Field';
 import type { FriendshipRow } from '../api/types';
+import { PseudoAutocomplete } from '../ui/PseudoAutocomplete';
 
 export function FriendsPage() {
   const nav = useNavigate();
@@ -38,12 +39,13 @@ export function FriendsPage() {
     <Shell title="Amis" subtitle="Demandes, acceptations et duels rapides">
       <div className="panel field-group" style={{ maxWidth: 560, marginBottom: 24 }}>
         <div className="eyebrow"><span className="label">Ajouter un ami</span></div>
-        <Field
+        <PseudoAutocomplete
           label="Pseudo"
           placeholder="ex: tom"
           value={pseudo}
-          onChange={(e) => { setPseudo(e.target.value); setError(null); }}
-          onKeyDown={(e) => e.key === 'Enter' && pseudo.trim().length >= 3 && sendMut.mutate()}
+          exclude={[/* ton pseudo */]}
+          onChange={(v) => { setPseudo(v); setError(null); }}
+          onEnter={() => pseudo.trim().length >= 3 && sendMut.mutate()}
         />
         {error && <div style={{ color: 'var(--loss)', fontSize: 13 }}>{error}</div>}
         <button
