@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
 import { useRemoteGameSync } from '../realtime/useRemoteGameSync';
+import { useEmotePair } from '../realtime/useEmotePair';
+import { EmoteBubble } from '../ui/EmoteBubble';
+import { EmotePicker } from '../ui/EmotePicker';
 
 // Babyfoot version arcade air-hockey, désormais multiplayer remote.
 //
@@ -319,11 +322,25 @@ function BabyfootComponent({ onFinish, player1, player2, mode = 'local', matchId
     ? `Tu joues 🔴 J1 (droite) — ${myScheme === 'arrows' ? 'flèches ↑↓←→' : 'ZQSD'} + Shift pour booster`
     : `Tu joues 🔵 J2 (gauche) — ${myScheme === 'arrows' ? 'flèches ↑↓←→' : 'ZQSD'} + Shift pour booster`;
 
+  const emotes = useEmotePair({ matchId, mode });
+  const leftBubbleKey  = mode === 'guest' ? emotes.myKey : emotes.opponentKey;
+  const rightBubbleKey = mode === 'guest' ? emotes.opponentKey : emotes.myKey;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-      <div style={{ display: 'flex', gap: 60, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 32 }}>
-        <span style={{ color: '#FF6B57' }}>🔴 {score.p1}</span>
-        <span style={{ color: '#5B8CFF' }}>🔵 {score.p2}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, position: 'relative' }}>
+      <div style={{ display: 'flex', gap: 60, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 32, alignItems: 'center' }}>
+        {/* Aligné sur les paddles : 🔵 J2 à gauche, 🔴 J1 à droite */}
+        <span style={{ color: '#5B8CFF', display: 'inline-flex', alignItems: 'center' }}>
+          🔵 {score.p2}
+          <EmoteBubble emoteKey={leftBubbleKey} side="right" />
+        </span>
+        <span style={{ color: '#FF6B57', display: 'inline-flex', alignItems: 'center' }}>
+          <EmoteBubble emoteKey={rightBubbleKey} side="left" />
+          🔴 {score.p1}
+        </span>
+      </div>
+      <div style={{ position: 'absolute', top: 6, right: 6, zIndex: 5 }}>
+        <EmotePicker onPick={emotes.triggerMine} label="Emotes" />
       </div>
       <canvas
         ref={canvasRef}

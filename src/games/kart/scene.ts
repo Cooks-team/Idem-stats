@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { ActiveItem, ItemBox, KartState, TrackData } from './types';
-import { emoteByKey, emoteCanvasFor } from './emotes';
+import { emoteByKey, emoteCanvasFor } from '../../lib/emotes';
 
 // Tout le visuel three.js du jeu. Pas d'assets externes — primitives + matériaux
 // pour un rendu arcade low-poly cohérent.
