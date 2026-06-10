@@ -9,11 +9,16 @@ import { MatchDetailPage } from './pages/MatchDetailPage';
 import { GamesHubPage } from './pages/GamesHubPage';
 import { GamePlayPage } from './pages/GamePlayPage';
 import { FriendsPage } from './pages/FriendsPage';
+import { LandingPage } from './pages/LandingPage';
 
 export function App() {
   return (
     <Routes>
+      {/* Public */}
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/about" element={<LandingPage />} />
+
+      {/* Privé */}
       <Route path="/" element={<RequireAuth><HomePage /></RequireAuth>} />
       <Route path="/profile" element={<RequireAuth><ProfilePage /></RequireAuth>} />
       <Route path="/matches" element={<RequireAuth><MatchesPage /></RequireAuth>} />

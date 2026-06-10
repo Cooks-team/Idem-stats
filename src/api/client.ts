@@ -60,6 +60,8 @@ export const api = {
   login: (pseudo: string, password: string) =>
     call<AuthResponse>('/auth/login', { method: 'POST', body: JSON.stringify({ pseudo, password }) }),
   me: () => call<User>('/me'),
+  updateMe: (patch: { pseudo?: string }) =>
+    call<User>('/me', { method: 'PATCH', body: JSON.stringify(patch) }),
 
   // Multipart : un FormData avec une seule entrée "file" (cf. multer côté API).
   uploadAvatar: (file: File) => {

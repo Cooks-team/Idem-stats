@@ -37,10 +37,14 @@ export function ProfilePage() {
 
   return (
     <Shell title={isMe ? 'Mon profil' : `Profil — ${target}`} onBack={requested ? () => nav(-1) : undefined}>
-      <div style={{ display: 'flex', gap: 24, alignItems: 'center' }}>
+      <div style={{ display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
         <Avatar seed={target ?? '?'} size={104} ring ringColor="var(--accent)" imageUrl={imageUrl} />
-        <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 36 }}>{target}</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {isMe ? (
+            <PseudoEditor current={target ?? ''} onSaved={setUser} />
+          ) : (
+            <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 36 }}>{target}</div>
+          )}
           <div style={{ color: 'var(--muted)', marginTop: 4 }}>
             {rank >= 0 ? `Rang ${rank + 1} / ${entries.length}` : 'Pas encore classé'}
           </div>
@@ -48,7 +52,7 @@ export function ProfilePage() {
         {isMe && <AvatarUpload onChange={setUser} hasAvatar={!!user?.avatarUrl} />}
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 12, marginTop: 28 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginTop: 28 }}>
         <Stat label="Victoires" value={entry?.wins ?? 0} color="var(--win)" />
         <Stat label="Défaites" value={entry?.losses ?? 0} color="var(--loss)" />
         <Stat label="Parties" value={entry?.played ?? 0} color="var(--text)" />
@@ -81,6 +85,79 @@ export function ProfilePage() {
       )}
     </Shell>
   );
+}
+
+// Édition inline du pseudo. Toggle entre "affichage" et "édition".
+function PseudoEditor({ current, onSaved }: { current: string; onSaved: (u: import('../api/types').User) => void }) {
+  const qc = useQueryClient();
+  const [editing, setEditing] = useState(false);
+  const [value, setValue] = useState(current);
+  const [error, setError] = useState<string | null>(null);
+
+  const mut = useMutation({
+    mutationFn: () => api.updateMe({ pseudo: value.trim() }),
+    onSuccess: (u) => {
+      onSaved(u);
+      // Invalide tout ce qui peut afficher le pseudo (leaderboard, friends, history)
+      qc.invalidateQueries({ queryKey: ['leaderboard'] });
+      qc.invalidateQueries({ queryKey: ['history'] });
+      qc.invalidateQueries({ queryKey: ['friends'] });
+      setEditing(false);
+    },
+    onError: (e) => setError(humanizePseudo(e)),
+  });
+
+  if (!editing) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 36, lineHeight: 1 }}>{current}</div>
+        <button
+          className="btn btn-ghost btn-sm"
+          onClick={() => { setEditing(true); setValue(current); setError(null); }}
+        >Modifier</button>
+      </div>
+    );
+  }
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+      <input
+        autoFocus
+        value={value}
+        onChange={(e) => { setValue(e.target.value); setError(null); }}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') mut.mutate();
+          if (e.key === 'Escape') { setEditing(false); setError(null); }
+        }}
+        style={{
+          fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 32,
+          background: 'var(--surface)', border: '1px solid var(--accent)',
+          borderRadius: 12, padding: '6px 14px', color: 'var(--text)',
+          outline: 'none', minWidth: 0, maxWidth: '100%',
+        }}
+      />
+      <button
+        className="btn btn-accent btn-sm"
+        disabled={value.trim().length < 3 || mut.isPending || value.trim() === current}
+        onClick={() => mut.mutate()}
+      >{mut.isPending ? '…' : 'Enregistrer'}</button>
+      <button
+        className="btn btn-line btn-sm"
+        onClick={() => { setEditing(false); setError(null); }}
+      >Annuler</button>
+      {error && <div style={{ flexBasis: '100%', color: 'var(--loss)', fontSize: 13 }}>{error}</div>}
+    </div>
+  );
+}
+
+function humanizePseudo(e: unknown): string {
+  if (e && typeof e === 'object' && 'message' in e) {
+    const m = String((e as { message: string }).message);
+    if (m === 'pseudo_taken') return 'Ce pseudo est déjà pris.';
+    if (m === 'validation_error') return 'Pseudo invalide (3-24 chars, lettres/chiffres/_.-).';
+    if (m === 'nothing_to_update') return 'Aucun changement.';
+    return m;
+  }
+  return 'Modification impossible.';
 }
 
 // Une ligne d'historique : opponent (cliquable), jeu, score, W/L, date, condition shifumi.
