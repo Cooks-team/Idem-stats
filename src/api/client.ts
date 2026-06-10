@@ -1,5 +1,5 @@
 // Mince wrapper fetch : ajoute Bearer si dispo, sérialise JSON, jette une ApiError typée.
-import type { AuthResponse, BadgesResponse, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, ShifumiPick, User, WallOfShameResponse } from './types';
+import type { AuthResponse, BadgesResponse, BlackjackRoundResponse, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, ShifumiPick, User, WallOfShameResponse } from './types';
 
 const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 export const API_BASE_URL = BASE;
@@ -130,6 +130,10 @@ export const api = {
 
   // Wall of shame : latest 5-0 + ranking des joueurs qui en ont pris le plus
   wallOfShame: () => call<WallOfShameResponse>('/wall-of-shame'),
+
+  // Blackjack — applique le delta de coins après une manche (friend-trust).
+  blackjackRound: (bet: number, payout: number, meta?: unknown) =>
+    call<BlackjackRoundResponse>('/blackjack/round', { method: 'POST', body: JSON.stringify({ bet, payout, meta }) }),
 
   // Sync temps réel pour les jeux remote (host-authoritative).
   // sendPlayInput : envoyé par le guest, reçu par le host via SSE

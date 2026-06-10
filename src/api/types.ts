@@ -4,6 +4,13 @@ export interface User {
   pseudo: string;
   avatarUrl?: string | null;
   createdAt?: string;
+  // Jetons gagnés via les 1v1, dépensés au casino. Optionnel pour rétro-compat.
+  coins?: number;
+}
+
+export interface BlackjackRoundResponse {
+  coins: number;
+  delta: number;
 }
 
 export type MatchStatus = 'pending' | 'active' | 'finished' | 'cancelled';

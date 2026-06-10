@@ -28,9 +28,10 @@ export function Shell({ title, subtitle, children, onBack, action }: {
   // Ferme le drawer à chaque changement de route
   useEffect(() => { setDrawerOpen(false); }, [loc.pathname]);
 
-  const items: Array<{ to: string; icon: 'trophy' | 'grid' | 'pulse' | 'user'; label: string; end?: boolean }> = [
+  const items: Array<{ to: string; icon: 'trophy' | 'grid' | 'pulse' | 'user' | 'bolt'; label: string; end?: boolean }> = [
     { to: '/', icon: 'trophy', label: 'Classement', end: true },
     { to: '/games', icon: 'grid', label: 'Jeux' },
+    { to: '/blackjack', icon: 'bolt', label: 'Casino 🪙' },
     { to: '/matches', icon: 'pulse', label: 'Activité' },
     { to: '/friends', icon: 'user', label: 'Amis' },
     { to: '/profile', icon: 'user', label: 'Profil' },
@@ -90,6 +91,24 @@ export function Shell({ title, subtitle, children, onBack, action }: {
             <h1>{title}</h1>
             {subtitle && <div className="subtitle">{subtitle}</div>}
           </div>
+          {/* Solde de jetons — visible sur toutes les pages, clickable vers le casino */}
+          {user && typeof user.coins === 'number' && (
+            <button
+              onClick={() => nav('/blackjack')}
+              title="Casino — Blackjack"
+              style={{
+                display: 'inline-flex', alignItems: 'center', gap: 6,
+                padding: '6px 12px', borderRadius: 999,
+                background: 'color-mix(in oklab, #FFD700 22%, var(--surface))',
+                border: '1px solid #FFD700',
+                fontFamily: 'var(--font-display)', fontWeight: 700,
+                color: 'var(--text)', cursor: 'pointer', whiteSpace: 'nowrap',
+              }}
+            >
+              <span style={{ fontSize: 16 }}>🪙</span>
+              <span>{user.coins}</span>
+            </button>
+          )}
           <InboxBell />
           {action ?? (
             <button className="btn btn-accent btn-sm" onClick={() => nav('/matches/new')}>
