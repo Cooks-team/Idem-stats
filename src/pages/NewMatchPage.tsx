@@ -219,6 +219,7 @@ function ShifumiForm({
   const [whoWon, setWhoWon] = useState<'me' | 'them' | null>(null);
   const [winnerPick, setWinnerPick] = useState<ShifumiPick | null>(null);
   const [condition, setCondition] = useState('');
+  const [bestOf, setBestOf] = useState<1 | 3 | 5>(1);
   // Le pick perdant n'a qu'une seule valeur possible une fois winnerPick choisi.
   const forcedLoserPick = useMemo(() => (winnerPick ? SHIFUMI_LOSES_TO[winnerPick] : null), [winnerPick]);
 
@@ -229,7 +230,7 @@ function ShifumiForm({
       const opp = opponent.trim();
       if (!opp) throw new Error('opponent_required');
       const winnerPseudo = whoWon === 'me' ? user!.pseudo : opp;
-      return api.createShifumi(opp, winnerPseudo, winnerPick, forcedLoserPick, condition.trim() || undefined);
+      return api.createShifumi(opp, winnerPseudo, winnerPick, forcedLoserPick, condition.trim() || undefined, bestOf);
     },
     onSuccess,
     onError: (e) => setError(humanize(e)),
@@ -245,6 +246,21 @@ function ShifumiForm({
         value={opponent}
         onChange={(e) => setOpponent(e.target.value)}
       />
+
+      <div className="eyebrow" style={{ marginTop: 8 }}><span className="label">Format</span></div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        {[1, 3, 5].map((n) => (
+          <button
+            key={n}
+            type="button"
+            className={`chip ${bestOf === n ? 'active accent' : ''}`}
+            onClick={() => setBestOf(n as 1 | 3 | 5)}
+          >{n === 1 ? '1 manche' : `BO${n}`}</button>
+        ))}
+      </div>
+      <div style={{ color: 'var(--muted)', fontSize: 12 }}>
+        {bestOf === 1 ? 'Une seule manche.' : `Score enregistré : ${Math.ceil(bestOf / 2)}-0 pour le gagnant (sweep).`}
+      </div>
 
       <div className="eyebrow" style={{ marginTop: 8 }}><span className="label">Qui a gagné ?</span></div>
       <div style={{ display: 'flex', gap: 8 }}>

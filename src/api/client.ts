@@ -81,13 +81,13 @@ export const api = {
     call<Match>('/matches', { method: 'POST', body: JSON.stringify({ game, opponentPseudo: opponentPseudo || undefined, mode }) }),
   acceptInvitation: (matchId: string) => call<Match>(`/matches/${matchId}/accept`, { method: 'POST' }),
   declineInvitation: (matchId: string) => call<Match>(`/matches/${matchId}/decline`, { method: 'POST' }),
-  createShifumi: (opponentPseudo: string, winnerPseudo: string, winnerPick: ShifumiPick, loserPick: ShifumiPick, condition?: string) =>
+  createShifumi: (opponentPseudo: string, winnerPseudo: string, winnerPick: ShifumiPick, loserPick: ShifumiPick, condition?: string, bestOf?: 1 | 3 | 5) =>
     call<Match>('/matches', {
       method: 'POST',
       body: JSON.stringify({
         game: 'shifumi',
         opponentPseudo,
-        shifumi: { mode: 'irl', winnerPseudo, winnerPick, loserPick, condition: condition?.trim() || undefined },
+        shifumi: { mode: 'irl', winnerPseudo, winnerPick, loserPick, condition: condition?.trim() || undefined, bestOf },
       }),
     }),
   createShifumiRemote: (opponentPseudo: string, myPick: ShifumiPick, condition?: string, bestOf?: 1 | 3 | 5) =>

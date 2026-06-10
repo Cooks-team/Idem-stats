@@ -96,9 +96,11 @@ export const SnakeGame: GameModule = {
 };
 
 function SnakeComponent({ onFinish }: GameProps) {
+  const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [phase, setPhase] = useState<'ready' | 'running' | 'done'>('ready');
   const [playerCount, setPlayerCount] = useState<2 | 4>(2);
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const stateRef = useRef<{ snakes: Snake[]; food: Pt }>({ snakes: initSnakes(2), food: { x: 14, y: 10 } });
   const [tick, setTick] = useState(0);
 
@@ -106,7 +108,33 @@ function SnakeComponent({ onFinish }: GameProps) {
     stateRef.current = { snakes: initSnakes(playerCount), food: { x: 14, y: 10 } };
     setPhase('running');
     setTick(0);
+    // Demande le fullscreen sur le wrapper. Le browser peut refuser si non
+    // déclenché par un user gesture (ici on est dans onClick → OK).
+    const el = wrapperRef.current;
+    if (el && el.requestFullscreen && !document.fullscreenElement) {
+      el.requestFullscreen().catch(() => { /* silencieux : si le navigateur refuse, on reste embedded */ });
+    }
   };
+
+  // Sync l'état React avec le statut fullscreen réel (l'utilisateur peut
+  // appuyer sur Échap, on doit le savoir pour réajuster le rendu).
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(document.fullscreenElement === wrapperRef.current);
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+
+  // Sort du fullscreen quand la partie est finie + cleanup au unmount
+  useEffect(() => {
+    if (phase === 'done' && document.fullscreenElement === wrapperRef.current) {
+      document.exitFullscreen().catch(() => {});
+    }
+  }, [phase]);
+  useEffect(() => () => {
+    if (document.fullscreenElement === wrapperRef.current) {
+      document.exitFullscreen().catch(() => {});
+    }
+  }, []);
 
   // Saisie clavier — multiplexe sur les 2 ou 4 snakes selon le mode actuel
   useEffect(() => {
@@ -159,7 +187,20 @@ function SnakeComponent({ onFinish }: GameProps) {
   }, [tick, phase]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
+    <div
+      ref={wrapperRef}
+      style={{
+        display: 'flex', flexDirection: 'column', alignItems: 'center',
+        justifyContent: isFullscreen ? 'center' : 'flex-start',
+        gap: 14,
+        // En fullscreen on prend l'écran complet avec fond sombre. Hors fullscreen
+        // on garde la mise en page intégrée habituelle.
+        background: isFullscreen ? '#0B0D10' : 'transparent',
+        width: isFullscreen ? '100vw' : 'auto',
+        height: isFullscreen ? '100vh' : 'auto',
+        padding: isFullscreen ? 24 : 0,
+      }}
+    >
       {phase === 'ready' && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
           <button
@@ -186,7 +227,17 @@ function SnakeComponent({ onFinish }: GameProps) {
         ref={canvasRef}
         width={COLS * CELL}
         height={ROWS * CELL}
-        style={{ background: '#0B0D10', borderRadius: 14, border: '1px solid var(--line)', maxWidth: '100%', height: 'auto' }}
+        // En fullscreen on agrandit le canvas pour qu'il occupe la plus grande
+        // surface possible tout en préservant son ratio (28/20 = 1.4) et en
+        // laissant de la place pour le score au-dessus.
+        style={{
+          background: '#0B0D10', borderRadius: 14,
+          border: '1px solid var(--line)',
+          maxWidth: '100%',
+          maxHeight: isFullscreen ? 'calc(100vh - 140px)' : 'none',
+          width: isFullscreen ? 'auto' : undefined,
+          height: 'auto',
+        }}
       />
 
       {phase === 'ready' && (
