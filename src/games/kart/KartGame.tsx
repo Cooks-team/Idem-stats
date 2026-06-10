@@ -152,7 +152,7 @@ function KartGameImpl({ onFinish, player1, player2, mode = 'local', matchId }: G
       if (k === 'c') setFpsMode((v) => !v);
       if (k === 'f') toggleFullscreen(containerRef.current);
       // Emotes : touches 1..8 → on déclenche immédiatement sur le kart joueur
-      if (/^[1-8]$/.test(k)) {
+      if (/^[1-9]$/.test(k)) {
         const idx = Number(k) - 1;
         const emote = EMOTES[idx];
         if (emote) triggerEmote(stateRef.current, myKartIdRef.current, emote.key, performance.now());
@@ -585,12 +585,19 @@ function Hud(props: {
   const me = state.karts.find((k) => k.id === myKartId);
   const second = secondaryKartId ? state.karts.find((k) => k.id === secondaryKartId) : null;
 
-  // Countdown 3..2..1.. GO
+  // Countdown 3..2..1.. GO ! — chaque token a sa propre couleur. Le "GO !"
+  // reste affiché ~700ms après que la course a démarré (sinon il flashe une
+  // frame puis disparaît, on a juste le temps de le voir).
   const countdownRemain = Math.max(0, countdownStart - now);
   let cdText: string | null = null;
-  if (countdownRemain > 0) {
-    const sec = Math.ceil(countdownRemain / 1000);
-    cdText = sec > 3 ? 'Prêts ?' : sec === 0 ? 'GO !' : String(sec);
+  let cdColor = '#FFD23B';
+  if (phase === 'countdown' && countdownRemain > 0) {
+    if (countdownRemain > 3000)      { cdText = 'PRÊT';  cdColor = '#FFFFFF'; }
+    else if (countdownRemain > 2000) { cdText = '3';     cdColor = '#FF6B57'; }
+    else if (countdownRemain > 1000) { cdText = '2';     cdColor = '#FFD23B'; }
+    else                              { cdText = '1';     cdColor = '#FFFFFF'; }
+  } else if (phase === 'racing' && now - countdownStart < 700) {
+    cdText = 'GO !'; cdColor = '#3DD68C';
   }
 
   // Podium final
@@ -647,18 +654,43 @@ function Hud(props: {
           fpsMode={fpsMode}
         />
       )}
-      {/* Countdown */}
+      {/* Countdown — animation pop-in à chaque changement de token via la key */}
       {cdText && (
-        <div style={{
-          position: 'absolute', top: '40%', left: 0, right: 0, textAlign: 'center',
-          fontFamily: 'var(--font-display)', fontWeight: 900, fontSize: 96,
-          color: cdText === 'GO !' ? '#3DD68C' : '#FFD23B',
-          textShadow: '0 6px 0 rgba(0,0,0,0.5)',
-          pointerEvents: 'none',
-        }}>
+        <div
+          key={cdText}
+          style={{
+            position: 'absolute', top: '32%', left: 0, right: 0, textAlign: 'center',
+            fontFamily: 'var(--font-display)', fontWeight: 900,
+            fontSize: cdText === 'GO !' ? 200 : cdText === 'PRÊT' ? 96 : 220,
+            color: cdColor,
+            textShadow: `0 8px 0 rgba(0,0,0,0.55), 0 0 36px ${cdColor}88`,
+            pointerEvents: 'none', letterSpacing: 4,
+            animation: 'idemCountdownPop 0.45s cubic-bezier(0.16, 1, 0.3, 1) both',
+          }}
+        >
           {cdText}
         </div>
       )}
+      {/* Bandeau "Locked, attends le GO" pendant le countdown — l'utilisateur
+          ne sait pas toujours qu'il est verrouillé, on lui dit. */}
+      {phase === 'countdown' && (
+        <div style={{
+          position: 'absolute', bottom: 90, left: 0, right: 0, textAlign: 'center',
+          color: 'rgba(255,255,255,0.85)', fontSize: 14, fontWeight: 700,
+          letterSpacing: 1.5, textTransform: 'uppercase', pointerEvents: 'none',
+          textShadow: '0 2px 4px rgba(0,0,0,0.6)',
+        }}>
+          Garde tes mains sur le volant — décollage imminent
+        </div>
+      )}
+      <style>{`
+        @keyframes idemCountdownPop {
+          0%   { transform: scale(0.2);  opacity: 0; }
+          35%  { transform: scale(1.35); opacity: 1; }
+          80%  { transform: scale(1.0);  opacity: 1; }
+          100% { transform: scale(0.95); opacity: 0.95; }
+        }
+      `}</style>
     </>
   );
 }
@@ -736,7 +768,7 @@ function ControlsHelp({ twoPlayers }: { twoPlayers: boolean }) {
           <li><kbd>Maj</kbd> (Shift) ou <kbd>Espace</kbd> : drift (braquage serré, sortie + rapide)</li>
           <li><kbd>E</kbd> ou <kbd>Entrée</kbd> : utiliser l'item en stock</li>
           <li><kbd>C</kbd> : cockpit / 3e personne &nbsp;·&nbsp; <kbd>F</kbd> : plein écran</li>
-          <li><kbd>1</kbd> à <kbd>8</kbd> : emotes (rage, clown, goat, L…)</li>
+          <li><kbd>1</kbd> à <kbd>9</kbd> : emotes (rage, clown, goat, L… + 🦈 Sharknado en 9)</li>
         </ul>
       )}
     </div>

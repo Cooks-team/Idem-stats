@@ -51,11 +51,18 @@ export function stepKart(kart: KartState, input: KartInput, ctx: PhysicsCtx) {
       kart.speed += ACCEL * throttle * dt * Math.min(1, headroom / 4 + 0.4);
     }
     if (brake > 0) {
+      // Le frein freine quand on roule en avant, puis fait reculer doucement.
       kart.speed -= BRAKE * brake * dt;
     }
-    // Drag passif
+    // Drag passif : tire la vitesse vers ZÉRO, ne la pousse jamais en négatif.
+    // (Bug v1 : on appliquait `speed -= NATURAL_DRAG*dt` même à v=0 → le kart
+    // reculait tout seul à l'arrêt.)
     if (throttle < 0.05 && brake < 0.05) {
-      kart.speed -= NATURAL_DRAG * dt;
+      if (kart.speed > 0) {
+        kart.speed = Math.max(0, kart.speed - NATURAL_DRAG * dt);
+      } else if (kart.speed < 0) {
+        kart.speed = Math.min(0, kart.speed + NATURAL_DRAG * dt);
+      }
     }
   }
   kart.speed = clamp(kart.speed, -10, speedCap);
