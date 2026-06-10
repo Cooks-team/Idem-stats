@@ -1,5 +1,5 @@
 // Mince wrapper fetch : ajoute Bearer si dispo, sérialise JSON, jette une ApiError typée.
-import type { AuthResponse, BadgesResponse, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, ShifumiPick, User } from './types';
+import type { AuthResponse, BadgesResponse, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, ShifumiPick, User, WallOfShameResponse } from './types';
 
 const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 export const API_BASE_URL = BASE;
@@ -127,4 +127,7 @@ export const api = {
 
   // Badges décernés à un user (Monster/Pue sa mère/Sniper/streak/volume)
   badges: (pseudo: string) => call<BadgesResponse>(`/badges/${encodeURIComponent(pseudo)}`),
+
+  // Wall of shame : latest 5-0 + ranking des joueurs qui en ont pris le plus
+  wallOfShame: () => call<WallOfShameResponse>('/wall-of-shame'),
 };

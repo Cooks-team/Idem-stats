@@ -103,6 +103,24 @@ export interface BadgesResponse {
   badges: Badge[];
 }
 
+export interface WallOfShameLatest {
+  match: { id: string; finishedAt: string | null };
+  loser: User;
+  winner: User;
+}
+
+export interface WallOfShameEntry {
+  user: User;
+  count: number;
+  lastAt: string | null;
+}
+
+export interface WallOfShameResponse {
+  latest: WallOfShameLatest | null;
+  ranking: WallOfShameEntry[];
+  totalEvents: number;
+}
+
 export interface LeaderboardEntry {
   user: User;
   wins: number;
