@@ -455,7 +455,16 @@ function ShifumiCreated({ nav, matchId }: { nav: ReturnType<typeof useNavigate>;
 
 // ─── existant : code à partager pour les autres jeux ────────────────────────
 function CodeReveal({ code }: { code: string }) {
-  const copy = () => navigator.clipboard.writeText(code).catch(() => {});
+  // Le lien d'invitation pointe vers /join/CODE — qui auto-join et redirige
+  // vers la room. Plus simple à coller dans WhatsApp/Discord qu'un code seul.
+  const inviteUrl = `${window.location.origin}/join/${encodeURIComponent(code)}`;
+  const [copied, setCopied] = useState<'code' | 'link' | null>(null);
+  const copy = (what: 'code' | 'link', text: string) => {
+    navigator.clipboard.writeText(text).then(() => {
+      setCopied(what);
+      setTimeout(() => setCopied(null), 1500);
+    }).catch(() => {});
+  };
   return (
     <div>
       <div className="eyebrow"><span className="label">Code à partager</span></div>
@@ -467,10 +476,26 @@ function CodeReveal({ code }: { code: string }) {
           fontFamily: 'var(--font-display)', fontWeight: 700,
           fontSize: 56, color: 'var(--accent)', letterSpacing: 8,
         }}>{code}</div>
-        <button className="icon-btn" onClick={copy} title="Copier"><Icon name="copy" size={20} /></button>
+        <button className="icon-btn" onClick={() => copy('code', code)} title="Copier le code">
+          <Icon name="copy" size={20} />
+        </button>
+      </div>
+      <div className="eyebrow" style={{ marginTop: 16 }}><span className="label">Lien d'invitation</span></div>
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '12px 14px', borderRadius: 12, background: 'var(--surface-2)',
+      }}>
+        <div style={{
+          flex: 1, minWidth: 0, fontFamily: 'monospace', fontSize: 13,
+          color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+        }}>{inviteUrl}</div>
+        <button className="btn btn-accent btn-sm" onClick={() => copy('link', inviteUrl)}>
+          {copied === 'link' ? 'Copié ✓' : 'Copier le lien'}
+        </button>
       </div>
       <p style={{ color: 'var(--muted)', fontSize: 13, marginTop: 14 }}>
-        Donne ce code à ton adversaire ou colle-le dans l'extension Chrome (Basket Random).
+        Partage le lien : ton pote clique → il rejoint le match direct (s'il est connecté).
+        Le code seul fonctionne aussi pour l'extension Chrome (Basket Random).
       </p>
     </div>
   );

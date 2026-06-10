@@ -89,30 +89,30 @@ function PongComponent({ onFinish }: GameProps) {
       if (s.ball.y - BALL_R <= 0 && s.ball.vy < 0) { s.ball.y = BALL_R; s.ball.vy *= -1; }
       if (s.ball.y + BALL_R >= H && s.ball.vy > 0) { s.ball.y = H - BALL_R; s.ball.vy *= -1; }
 
-      // 4) Collision raquettes
-      // Raquette gauche : x = 20..32
+      // 4) Collision raquettes — J1 est à DROITE (flèches), J2 à GAUCHE (ZQSD)
+      // Raquette J2 (gauche) : x = 20..32
       if (s.ball.x - BALL_R <= 32 && s.ball.x - BALL_R >= 18 && s.ball.vx < 0
-          && s.ball.y >= s.paddles.p1Y && s.ball.y <= s.paddles.p1Y + PADDLE_H) {
-        s.ball = bounceFromPaddle(s.ball, s.paddles.p1Y, 1);
-      }
-      // Raquette droite : x = W-32..W-20
-      if (s.ball.x + BALL_R >= W - 32 && s.ball.x + BALL_R <= W - 18 && s.ball.vx > 0
           && s.ball.y >= s.paddles.p2Y && s.ball.y <= s.paddles.p2Y + PADDLE_H) {
-        s.ball = bounceFromPaddle(s.ball, s.paddles.p2Y, -1);
+        s.ball = bounceFromPaddle(s.ball, s.paddles.p2Y, 1);
+      }
+      // Raquette J1 (droite) : x = W-32..W-20
+      if (s.ball.x + BALL_R >= W - 32 && s.ball.x + BALL_R <= W - 18 && s.ball.vx > 0
+          && s.ball.y >= s.paddles.p1Y && s.ball.y <= s.paddles.p1Y + PADDLE_H) {
+        s.ball = bounceFromPaddle(s.ball, s.paddles.p1Y, -1);
       }
 
-      // 5) But ?
+      // 5) But ? — la balle sort à gauche → J1 marque ; à droite → J2 marque
       if (s.ball.x < -BALL_R) {
         setScore((sc) => {
-          const next = { ...sc, p2: sc.p2 + 1 };
-          if (next.p2 >= WIN_SCORE) { setPhase('done'); setTimeout(() => onFinish(next.p1, next.p2), 700); }
+          const next = { ...sc, p1: sc.p1 + 1 };
+          if (next.p1 >= WIN_SCORE) { setPhase('done'); setTimeout(() => onFinish(next.p1, next.p2), 700); }
           return next;
         });
         s.ball = initBall(1);
       } else if (s.ball.x > W + BALL_R) {
         setScore((sc) => {
-          const next = { ...sc, p1: sc.p1 + 1 };
-          if (next.p1 >= WIN_SCORE) { setPhase('done'); setTimeout(() => onFinish(next.p1, next.p2), 700); }
+          const next = { ...sc, p2: sc.p2 + 1 };
+          if (next.p2 >= WIN_SCORE) { setPhase('done'); setTimeout(() => onFinish(next.p1, next.p2), 700); }
           return next;
         });
         s.ball = initBall(-1);
@@ -144,7 +144,7 @@ function PongComponent({ onFinish }: GameProps) {
         <>
           <button className="btn btn-accent btn-lg" onClick={start}>Démarrer</button>
           <div style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center' }}>
-            🔴 J1 : ↑ ↓ &nbsp;·&nbsp; 🔵 J2 : Z/S (ou W/S) &nbsp;·&nbsp; Premier à {WIN_SCORE}.
+            🔵 J2 (gauche) : Z/S ou W/S &nbsp;·&nbsp; 🔴 J1 (droite) : ↑ ↓ &nbsp;·&nbsp; Premier à {WIN_SCORE}.
           </div>
         </>
       )}
@@ -186,11 +186,11 @@ function draw(ctx: CanvasRenderingContext2D, s: { paddles: Paddles; ball: Ball }
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // Raquettes
-  ctx.fillStyle = '#FF6B57';
-  ctx.fillRect(20, s.paddles.p1Y, PADDLE_W, PADDLE_H);
+  // Raquettes — J1 rouge à DROITE (flèches), J2 bleu à GAUCHE (ZQSD)
   ctx.fillStyle = '#5B8CFF';
-  ctx.fillRect(W - 20 - PADDLE_W, s.paddles.p2Y, PADDLE_W, PADDLE_H);
+  ctx.fillRect(20, s.paddles.p2Y, PADDLE_W, PADDLE_H);
+  ctx.fillStyle = '#FF6B57';
+  ctx.fillRect(W - 20 - PADDLE_W, s.paddles.p1Y, PADDLE_W, PADDLE_H);
 
   // Balle
   ctx.fillStyle = '#D6FF3D';

@@ -32,8 +32,9 @@ interface State {
 
 function initState(): State {
   return {
-    p1: { x: W / 4, y: H / 2 },
-    p2: { x: (3 * W) / 4, y: H / 2 },
+    // J1 (flèches, à droite) sur la moitié DROITE ; J2 (ZQSD, à gauche) sur la moitié GAUCHE.
+    p1: { x: (3 * W) / 4, y: H / 2 },
+    p2: { x: W / 4,       y: H / 2 },
     p1V: { x: 0, y: 0 }, p2V: { x: 0, y: 0 },
     ball: { x: W / 2, y: H / 2 },
     ballV: { x: 0, y: 0 },
@@ -87,10 +88,10 @@ function BabyfootComponent({ onFinish }: GameProps) {
       if (s.keys.has('s'))                    s.p2.y += PADDLE_SPEED;
       if (s.keys.has('q') || s.keys.has('a')) s.p2.x -= PADDLE_SPEED;
       if (s.keys.has('d'))                    s.p2.x += PADDLE_SPEED;
-      // Contraintes : P1 sur la moitié gauche, P2 sur la moitié droite
-      s.p1.x = clamp(s.p1.x, PADDLE_R, W / 2 - PADDLE_R);
+      // Contraintes : J1 sur la moitié DROITE, J2 sur la moitié GAUCHE (clavier)
+      s.p1.x = clamp(s.p1.x, W / 2 + PADDLE_R, W - PADDLE_R);
       s.p1.y = clamp(s.p1.y, PADDLE_R, H - PADDLE_R);
-      s.p2.x = clamp(s.p2.x, W / 2 + PADDLE_R, W - PADDLE_R);
+      s.p2.x = clamp(s.p2.x, PADDLE_R, W / 2 - PADDLE_R);
       s.p2.y = clamp(s.p2.y, PADDLE_R, H - PADDLE_R);
       s.p1V = { x: s.p1.x - prevP1.x, y: s.p1.y - prevP1.y };
       s.p2V = { x: s.p2.x - prevP2.x, y: s.p2.y - prevP2.y };
@@ -129,18 +130,18 @@ function BabyfootComponent({ onFinish }: GameProps) {
         }
       }
 
-      // 5) But ? — seulement si y est dans la fente centrée [H/2 - GOAL_H/2 ; H/2 + GOAL_H/2]
+      // 5) But ? — J1 défend le but de DROITE, J2 le but de GAUCHE.
+      //    Balle qui sort à gauche → J1 marque ; balle qui sort à droite → J2 marque.
       const goalYMin = (H - GOAL_H) / 2;
       const goalYMax = (H + GOAL_H) / 2;
       const inGoalY = s.ball.y >= goalYMin && s.ball.y <= goalYMax;
       if (s.ball.x - BALL_R <= 0) {
         if (inGoalY) {
           setScore((sc) => {
-            const next = { ...sc, p2: sc.p2 + 1 };
-            if (next.p2 >= WIN_GOALS) { setPhase('done'); setTimeout(() => onFinish(next.p1, next.p2), 700); }
+            const next = { ...sc, p1: sc.p1 + 1 };
+            if (next.p1 >= WIN_GOALS) { setPhase('done'); setTimeout(() => onFinish(next.p1, next.p2), 700); }
             return next;
           });
-          // Reset balle
           s.ball = { x: W / 2, y: H / 2 }; s.ballV = randomKick(1);
         } else {
           s.ball.x = BALL_R; s.ballV.x *= -1;
@@ -149,8 +150,8 @@ function BabyfootComponent({ onFinish }: GameProps) {
       if (s.ball.x + BALL_R >= W) {
         if (inGoalY) {
           setScore((sc) => {
-            const next = { ...sc, p1: sc.p1 + 1 };
-            if (next.p1 >= WIN_GOALS) { setPhase('done'); setTimeout(() => onFinish(next.p1, next.p2), 700); }
+            const next = { ...sc, p2: sc.p2 + 1 };
+            if (next.p2 >= WIN_GOALS) { setPhase('done'); setTimeout(() => onFinish(next.p1, next.p2), 700); }
             return next;
           });
           s.ball = { x: W / 2, y: H / 2 }; s.ballV = randomKick(-1);
@@ -185,7 +186,7 @@ function BabyfootComponent({ onFinish }: GameProps) {
         <>
           <button className="btn btn-accent btn-lg" onClick={start}>Démarrer</button>
           <div style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center' }}>
-            🔴 J1 : flèches &nbsp;·&nbsp; 🔵 J2 : ZQSD &nbsp;·&nbsp; Premier à {WIN_GOALS} buts gagne.
+            🔵 J2 (gauche) : ZQSD &nbsp;·&nbsp; 🔴 J1 (droite) : flèches &nbsp;·&nbsp; Premier à {WIN_GOALS} buts.
           </div>
         </>
       )}
@@ -233,7 +234,7 @@ function draw(ctx: CanvasRenderingContext2D, s: State) {
   ctx.lineWidth = 3;
   ctx.beginPath(); ctx.moveTo(0, goalYMin); ctx.lineTo(0, goalYMin + GOAL_H); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(W, goalYMin); ctx.lineTo(W, goalYMin + GOAL_H); ctx.stroke();
-  // Palets
+  // Palets — J1 rouge à droite (flèches), J2 bleu à gauche (ZQSD)
   ctx.fillStyle = '#FF6B57';
   ctx.beginPath(); ctx.arc(s.p1.x, s.p1.y, PADDLE_R, 0, Math.PI * 2); ctx.fill();
   ctx.fillStyle = '#5B8CFF';

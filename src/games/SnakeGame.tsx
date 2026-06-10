@@ -44,22 +44,25 @@ const SKINS = [
   { fill: '#F5C542', head: '#B88A12', label: '🟡 J4', emoji: '🟡', controls: 'TFGH' },
 ] as const;
 
-// Position de départ + direction initiale pour chaque joueur, choisies pour qu'ils
-// se font face en 2P et qu'ils partent des 4 coins en 4P.
+// Position de départ. Côtés alignés avec la disposition du clavier physique :
+//   - les touches des J1 (flèches) et J3 (IJKL) sont sur la moitié DROITE du clavier
+//     → on les place à DROITE de l'écran
+//   - les touches des J2 (ZQSD/WASD) et J4 (TFGH) sont sur la moitié GAUCHE du clavier
+//     → on les place à GAUCHE de l'écran
 function initSnakes(count: 2 | 4): Snake[] {
   const midY = Math.floor(ROWS / 2);
   if (count === 2) {
     return [
-      makeSnake(0, 4, midY, RIGHT),                       // J1 part en haut-gauche-ish, va à droite
-      makeSnake(1, COLS - 5, midY, LEFT),                 // J2 part en haut-droite-ish, va à gauche
+      makeSnake(0, COLS - 5, midY, LEFT),  // J1 (flèches) à droite, va vers la gauche
+      makeSnake(1, 4,        midY, RIGHT), // J2 (ZQSD) à gauche, va vers la droite
     ];
   }
-  // 4 joueurs : un par coin, tous tournés vers l'intérieur
+  // 4 joueurs : J1+J3 à droite, J2+J4 à gauche
   return [
-    makeSnake(0, 4,            3,            RIGHT), // J1 haut-gauche → droite
-    makeSnake(1, COLS - 5,     3,            LEFT),  // J2 haut-droit  → gauche
-    makeSnake(2, COLS - 5,     ROWS - 4,     LEFT),  // J3 bas-droit   → gauche
-    makeSnake(3, 4,            ROWS - 4,     RIGHT), // J4 bas-gauche  → droite
+    makeSnake(0, COLS - 5,  3,            LEFT),  // J1 haut-droit
+    makeSnake(1, 4,         3,            RIGHT), // J2 haut-gauche
+    makeSnake(2, COLS - 5,  ROWS - 4,     LEFT),  // J3 bas-droit
+    makeSnake(3, 4,         ROWS - 4,     RIGHT), // J4 bas-gauche
   ];
 }
 
@@ -130,14 +133,16 @@ function SnakeComponent({ onFinish }: GameProps) {
       if (aliveCount <= 1) {
         clearInterval(interval);
         setPhase('done');
-        // Score remonté au match record (qui est 2-player) :
-        //   - en 2P : longueurs J1 vs J2
-        //   - en 4P : on remonte la longueur du gagnant (P1) vs celle du dernier mort (P2)
-        //     C'est imparfait mais le match record est 2-player ; la souveraineté
-        //     du résultat reste correcte (le gagnant a le plus haut score).
-        const sorted = [...s.snakes].sort((a, b) => Number(b.alive) - Number(a.alive) || b.body.length - a.body.length);
-        const sc1 = sorted[0]?.body.length ?? 0;
-        const sc2 = sorted[1]?.body.length ?? 0;
+        // Le match record est 2-player : on remonte TOUJOURS snakes[0] vs snakes[1]
+        // pour préserver le mapping J1=player1 / J2=player2 (avant ça on triait par
+        // survie, ce qui faisait que le score envoyé pouvait inverser le winner —
+        // P1 enregistré comme gagnant alors que J2 avait survécu).
+        // Bonus survie : +1 pour que le survivant ait un score strictement supérieur,
+        // même si la longueur des serpents est identique (cas du heurt sur la queue
+        // sans avoir mangé : J2 vivant len=4, J1 mort len=4 → on envoie 5 vs 4).
+        const aliveBonus = (sn: Snake) => sn.alive ? 1 : 0;
+        const sc1 = (s.snakes[0]?.body.length ?? 0) + aliveBonus(s.snakes[0]);
+        const sc2 = (s.snakes[1]?.body.length ?? 0) + aliveBonus(s.snakes[1]);
         setTimeout(() => onFinish(sc1, sc2), 600);
       }
     }, TICK_MS);
