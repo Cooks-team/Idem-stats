@@ -190,18 +190,27 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
     const lastBroadcast = { t: 0 };
     const interval = window.setInterval(() => {
       const s = stateRef.current;
-      // 1) Bouge les raquettes
-      // J1 (host ou local) : flèches OU zqsd (peu importe en host car listener filtre)
-      if (s.keys.has('arrowup') || s.keys.has('z') || s.keys.has('w')) s.paddles.p1Y = Math.max(0, s.paddles.p1Y - PADDLE_SPEED);
-      if (s.keys.has('arrowdown') || s.keys.has('s')) s.paddles.p1Y = Math.min(H - PADDLE_H, s.paddles.p1Y + PADDLE_SPEED);
-      // J2 :
-      //  - en local : zqsd locales
-      //  - en host  : inputs guest (guestUp/Down)
+      // 1) Bouge les raquettes — fix attribution des touches
+      //
+      // En LOCAL : J1 = FLÈCHES UNIQUEMENT, J2 = ZQSD UNIQUEMENT. Avant, J1
+      // captait aussi zqsd → quand J2 appuyait sur Z, les deux paddles
+      // montaient ensemble. Bug visible direct en jouant à 2.
+      //
+      // En HOST/GUEST : on a déjà filtré au keyup/down via myScheme, donc
+      // J1 (host) accepte ses touches préférées qui ont été stockées en
+      // arrowup/arrowdown par le listener.
       if (mode === 'local') {
+        if (s.keys.has('arrowup'))   s.paddles.p1Y = Math.max(0, s.paddles.p1Y - PADDLE_SPEED);
+        if (s.keys.has('arrowdown')) s.paddles.p1Y = Math.min(H - PADDLE_H, s.paddles.p1Y + PADDLE_SPEED);
         if (s.keys.has('z') || s.keys.has('w')) s.paddles.p2Y = Math.max(0, s.paddles.p2Y - PADDLE_SPEED);
-        if (s.keys.has('s')) s.paddles.p2Y = Math.min(H - PADDLE_H, s.paddles.p2Y + PADDLE_SPEED);
+        if (s.keys.has('s'))                    s.paddles.p2Y = Math.min(H - PADDLE_H, s.paddles.p2Y + PADDLE_SPEED);
       } else {
-        if (s.guestUp) s.paddles.p2Y = Math.max(0, s.paddles.p2Y - PADDLE_SPEED);
+        // HOST : son paddle (J1) bouge selon arrowup/down (le listener a
+        // canonicalisé via myScheme avant de stocker)
+        if (s.keys.has('arrowup'))   s.paddles.p1Y = Math.max(0, s.paddles.p1Y - PADDLE_SPEED);
+        if (s.keys.has('arrowdown')) s.paddles.p1Y = Math.min(H - PADDLE_H, s.paddles.p1Y + PADDLE_SPEED);
+        // J2 = inputs du guest reçus via SSE
+        if (s.guestUp)   s.paddles.p2Y = Math.max(0, s.paddles.p2Y - PADDLE_SPEED);
         if (s.guestDown) s.paddles.p2Y = Math.min(H - PADDLE_H, s.paddles.p2Y + PADDLE_SPEED);
       }
 
