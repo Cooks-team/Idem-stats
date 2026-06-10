@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
+import { useEmotePair } from '../realtime/useEmotePair';
+import { EmoteBubble } from '../ui/EmoteBubble';
+import { EmotePicker } from '../ui/EmotePicker';
 
 // Fléchettes — mécanique 501 façon Plato avec SLIDE TO THROW.
 //   - Une fléchette posée en bas du board, visible dans la zone "ready"
@@ -55,7 +58,8 @@ export const DartsGame: GameModule = {
   Component: DartsComponent,
 };
 
-function DartsComponent({ onFinish }: GameProps) {
+function DartsComponent({ onFinish, mode = 'local', matchId }: GameProps) {
+  const emotes = useEmotePair({ matchId, mode });
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [scores, setScores] = useState({ p1: START_SCORE, p2: START_SCORE });
   const [turn, setTurn] = useState<1 | 2>(1);
@@ -241,10 +245,15 @@ function DartsComponent({ onFinish }: GameProps) {
   const dartsLeftInTurn = DARTS_PER_TURN - turnHits.length;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, width: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, width: '100%', position: 'relative' }}>
+      <div style={{ position: 'absolute', top: 0, right: 0, zIndex: 5 }}>
+        <EmotePicker onPick={emotes.triggerMine} />
+      </div>
       <div style={{ display: 'flex', width: '100%', maxWidth: 480, gap: 10 }}>
-        <PlayerCard label="J1 🔴" score={scores.p1} active={turn === 1 && phase === 'playing'} color="#FF6B57" />
-        <PlayerCard label="J2 🔵" score={scores.p2} active={turn === 2 && phase === 'playing'} color="#5B8CFF" />
+        <PlayerCard label="J1 🔴" score={scores.p1} active={turn === 1 && phase === 'playing'} color="#FF6B57"
+          emoteKey={mode === 'guest' ? emotes.opponentKey : emotes.myKey} />
+        <PlayerCard label="J2 🔵" score={scores.p2} active={turn === 2 && phase === 'playing'} color="#5B8CFF"
+          emoteKey={mode === 'guest' ? emotes.myKey : emotes.opponentKey} />
       </div>
 
       {phase === 'playing' && (
@@ -299,7 +308,9 @@ function DartsComponent({ onFinish }: GameProps) {
   );
 }
 
-function PlayerCard({ label, score, active, color }: { label: string; score: number; active: boolean; color: string }) {
+function PlayerCard({ label, score, active, color, emoteKey }: {
+  label: string; score: number; active: boolean; color: string; emoteKey?: string | null;
+}) {
   return (
     <div style={{
       flex: 1, padding: '10px 14px', borderRadius: 14,
@@ -308,7 +319,10 @@ function PlayerCard({ label, score, active, color }: { label: string; score: num
       textAlign: 'center',
       transition: 'background .15s ease, border-color .15s ease',
     }}>
-      <div style={{ color, fontWeight: 700, fontSize: 13, letterSpacing: 0.5 }}>{label}</div>
+      <div style={{ color, fontWeight: 700, fontSize: 13, letterSpacing: 0.5, display: 'inline-flex', alignItems: 'center', justifyContent: 'center' }}>
+        {label}
+        <EmoteBubble emoteKey={emoteKey} side="right" />
+      </div>
       <div className="tabular" style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 44, lineHeight: 1, marginTop: 4 }}>
         {score}
       </div>

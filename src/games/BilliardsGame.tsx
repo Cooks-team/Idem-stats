@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
+import { useEmotePair } from '../realtime/useEmotePair';
+import { EmoteBubble } from '../ui/EmoteBubble';
+import { EmotePicker } from '../ui/EmotePicker';
 
 // Billard 8-ball avec les vraies règles :
 //   1. Pile ou face animé pour décider qui commence
@@ -122,7 +125,8 @@ export const BilliardsGame: GameModule = {
   Component: BilliardsComponent,
 };
 
-function BilliardsComponent({ onFinish }: GameProps) {
+function BilliardsComponent({ onFinish, mode = 'local', matchId }: GameProps) {
+  const emotes = useEmotePair({ matchId, mode });
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stateRef = useRef<{ balls: Ball[]; aim: V2 | null }>({ balls: initBalls(), aim: null });
   // Démarre sur 'choosing' : J1 choisit pile ou face avant le flip
@@ -389,16 +393,27 @@ function BilliardsComponent({ onFinish }: GameProps) {
   const turnLabel = currentPlayer === 1 ? '🔴 Joueur 1' : '🔵 Joueur 2';
   const myGroup = currentPlayer === 1 ? groups.p1 : groups.p2;
 
+  // Billard turn-based : pas de "côté" gauche/droite, mais on attache
+  // myKey à P1 si je suis host/local, à P2 si je suis guest — pareil que
+  // les autres jeux.
+  const p1EmoteKey = mode === 'guest' ? emotes.opponentKey : emotes.myKey;
+  const p2EmoteKey = mode === 'guest' ? emotes.myKey : emotes.opponentKey;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-      <div style={{ display: 'flex', gap: 60, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 30 }}>
-        <span style={{ color: '#FF6B57' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, position: 'relative' }}>
+      <div style={{ position: 'absolute', top: 0, right: 0, zIndex: 5 }}>
+        <EmotePicker onPick={emotes.triggerMine} />
+      </div>
+      <div style={{ display: 'flex', gap: 60, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 30, alignItems: 'center' }}>
+        <span style={{ color: '#FF6B57', display: 'inline-flex', alignItems: 'center' }}>
           🔴 {scores.p1}
           {groups.p1 && <span style={{ fontSize: 14, marginLeft: 6, opacity: 0.85 }}>{groups.p1 === 'solid' ? '● PLEINES' : '◐ RAYÉES'}</span>}
+          <EmoteBubble emoteKey={p1EmoteKey} side="right" />
         </span>
-        <span style={{ color: '#5B8CFF' }}>
+        <span style={{ color: '#5B8CFF', display: 'inline-flex', alignItems: 'center' }}>
           🔵 {scores.p2}
           {groups.p2 && <span style={{ fontSize: 14, marginLeft: 6, opacity: 0.85 }}>{groups.p2 === 'solid' ? '● PLEINES' : '◐ RAYÉES'}</span>}
+          <EmoteBubble emoteKey={p2EmoteKey} side="right" />
         </span>
       </div>
 

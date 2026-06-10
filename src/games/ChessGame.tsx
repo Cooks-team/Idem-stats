@@ -1,5 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
+import { useEmotePair } from '../realtime/useEmotePair';
+import { EmoteBubble } from '../ui/EmoteBubble';
+import { EmotePicker } from '../ui/EmotePicker';
 
 // Échecs 1v1 local sur même écran/clavier, façon chess.com.
 //   - P1 joue les blancs, P2 les noirs (assignment arbitraire)
@@ -298,7 +301,8 @@ export const ChessGame: GameModule = {
   Component: ChessComponent,
 };
 
-function ChessComponent({ onFinish, player1, player2 }: GameProps) {
+function ChessComponent({ onFinish, player1, player2, mode = 'local', matchId }: GameProps) {
+  const emotes = useEmotePair({ matchId, mode });
   const [state, setState] = useState<GameState>(initGameState);
   const [selected, setSelected] = useState<[number, number] | null>(null);
   const [finished, setFinished] = useState(false);
@@ -451,14 +455,24 @@ function ChessComponent({ onFinish, player1, player2 }: GameProps) {
     return `Au trait : ${turnLabel}`;
   })();
 
+  // Echecs : J1 = Blancs (host/local), J2 = Noirs (guest). Le bandeau en
+  // haut affiche l'adversaire (Noirs), celui en bas le joueur courant
+  // (Blancs). Bulles emote attachées au bandeau correspondant.
+  const whiteEmoteKey = mode === 'guest' ? emotes.opponentKey : emotes.myKey;
+  const blackEmoteKey = mode === 'guest' ? emotes.myKey : emotes.opponentKey;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12, position: 'relative' }}>
+      <div style={{ position: 'absolute', top: 0, right: 0, zIndex: 5 }}>
+        <EmotePicker onPick={emotes.triggerMine} />
+      </div>
       {/* Bandeau noirs en haut (vue normale : blancs en bas) */}
       <PlayerStrip
         side="b"
         pseudo={player2?.pseudo ?? 'Noirs'}
         captured={state.history.filter(h => h.captured && state.board /* placeholder */).map(h => h)}
         history={state.history}
+        emoteKey={blackEmoteKey}
       />
 
       {/* Status */}
@@ -526,6 +540,7 @@ function ChessComponent({ onFinish, player1, player2 }: GameProps) {
         pseudo={player1?.pseudo ?? 'Blancs'}
         captured={[]}
         history={state.history}
+        emoteKey={whiteEmoteKey}
       />
 
       {/* Bouton abandonner */}
@@ -691,8 +706,8 @@ function ChessBoard({
   );
 }
 
-function PlayerStrip({ side, pseudo, history }: {
-  side: Color; pseudo: string; captured: unknown; history: MoveRecord[];
+function PlayerStrip({ side, pseudo, history, emoteKey }: {
+  side: Color; pseudo: string; captured: unknown; history: MoveRecord[]; emoteKey?: string | null;
 }) {
   // On affiche les pièces que CE joueur a capturées (= celles de la couleur opposée prises)
   const myColor = side;
@@ -720,7 +735,10 @@ function PlayerStrip({ side, pseudo, history }: {
       maxWidth: 560, width: '100%',
     }}>
       <span style={{ fontSize: 18 }}>{side === 'w' ? '🤍' : '🖤'}</span>
-      <strong style={{ fontSize: 14 }}>{pseudo}</strong>
+      <strong style={{ fontSize: 14, display: 'inline-flex', alignItems: 'center' }}>
+        {pseudo}
+        <EmoteBubble emoteKey={emoteKey} side="right" />
+      </strong>
       <div style={{ flex: 1, display: 'flex', gap: 0, alignItems: 'center', overflow: 'hidden' }}>
         {captures.map((c, i) => (
           <span key={i} style={{
