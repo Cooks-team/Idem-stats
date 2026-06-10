@@ -16,6 +16,7 @@ export const KNOWN_GAMES: KnownGame[] = [
   { apiId: 'clicker',       display: 'Click Battle', playable: true },
   { apiId: 'snake',         display: 'Snake',        playable: true },
   { apiId: 'billiards',     display: 'Billard',      playable: true },
+  { apiId: 'chess',         display: 'Échecs',       playable: true },
   { apiId: 'shifumi',       display: 'Shifumi' },
 ];
 
