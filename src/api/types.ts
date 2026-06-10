@@ -23,11 +23,23 @@ export interface ShifumiMetadata {
   // Remote pending / résolu :
   creatorPick?: ShifumiPick;          // visible par le créateur en pending, par tous en finished
   opponentPick?: ShifumiPick;         // visible par tous en finished
-  awaitingMyPick?: boolean;           // côté opponent en pending
-  awaitingOpponentPick?: boolean;     // côté créateur en pending
-  tie?: boolean;                       // égalité en remote
+  awaitingMyPick?: boolean;           // mon pick n'est pas posé pour ce round
+  awaitingOpponentPick?: boolean;     // mon pick est posé, l'autre attend
+  tie?: boolean;                       // (legacy — anciens matchs où tie = finished)
+  // Round courant et historique des rounds écoulés (ties + round final)
+  round?: number;
+  history?: ShifumiRoundEntry[];
+  lastTieRound?: number;              // = round qui vient de se conclure en égalité
   // Enjeu du duel ("celui qui perd paye"…), max 200 chars, visible des deux côtés
   condition?: string;
+}
+
+export interface ShifumiRoundEntry {
+  round: number;
+  creatorPick: ShifumiPick;
+  opponentPick: ShifumiPick;
+  tie?: boolean;
+  winnerPseudo?: string;
 }
 
 export interface FriendshipRow {
