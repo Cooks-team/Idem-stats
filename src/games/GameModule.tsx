@@ -6,6 +6,10 @@ import type { ComponentType } from 'react';
 export interface GameProps {
   // Appelée par le jeu à la fin de la partie. Le wrapper s'occupera de PATCH + finish via l'API.
   onFinish: (scoreP1: number, scoreP2: number) => void;
+  // Identité visuelle des joueurs (avatar + pseudo) — utilisée par certains jeux
+  // pour afficher le pseudo et la photo sur les éléments contrôlés (paddle babyfoot, etc.)
+  player1?: { pseudo?: string; avatarUrl?: string | null };
+  player2?: { pseudo?: string; avatarUrl?: string | null };
 }
 
 export interface GameModule {

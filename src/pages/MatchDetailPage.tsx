@@ -224,7 +224,11 @@ function PlayableGameRoom({ match, onMatchUpdated, onCancel, cancelling }: {
             <strong style={{ color: 'var(--blue)' }}>{match.player2?.pseudo ?? 'P2'}</strong>
           </div>
         </div>
-        <mod.Component onFinish={(p1, p2) => reportMut.mutate({ p1, p2 })} />
+        <mod.Component
+          onFinish={(p1, p2) => reportMut.mutate({ p1, p2 })}
+          player1={match.player1 ? { pseudo: match.player1.pseudo, avatarUrl: absoluteAvatar(match.player1.avatarUrl ?? null) } : undefined}
+          player2={match.player2 ? { pseudo: match.player2.pseudo, avatarUrl: absoluteAvatar(match.player2.avatarUrl ?? null) } : undefined}
+        />
         {reportMut.isPending && (
           <div style={{ textAlign: 'center', color: 'var(--muted)', marginTop: 12 }}>Envoi du score…</div>
         )}
