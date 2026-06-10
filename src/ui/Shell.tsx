@@ -5,6 +5,8 @@ import { Icon } from './Icon';
 import { Avatar } from './Avatar';
 import { useAuth } from '../auth/AuthContext';
 import { absoluteAvatar } from '../api/client';
+import { InboxBell } from './InboxBell';
+import { useEvents } from '../realtime/useEvents';
 
 // Shell desktop + mobile : Sidebar (drawer sur mobile) + Topbar + Content.
 export function Shell({ title, subtitle, children, onBack, action }: {
@@ -18,6 +20,9 @@ export function Shell({ title, subtitle, children, onBack, action }: {
   const nav = useNavigate();
   const loc = useLocation();
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Connexion SSE temps réel — invalide les queries impactées à chaque event reçu.
+  useEvents(!!user);
 
   // Ferme le drawer à chaque changement de route
   useEffect(() => { setDrawerOpen(false); }, [loc.pathname]);
@@ -81,6 +86,7 @@ export function Shell({ title, subtitle, children, onBack, action }: {
             <h1>{title}</h1>
             {subtitle && <div className="subtitle">{subtitle}</div>}
           </div>
+          <InboxBell />
           {action ?? (
             <button className="btn btn-accent btn-sm" onClick={() => nav('/matches/new')}>
               <Icon name="bolt" size={18} /> Nouveau match

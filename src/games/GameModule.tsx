@@ -17,9 +17,11 @@ export interface GameModule {
 }
 
 import { ClickerGame } from './ClickerGame';
+import { SnakeGame } from './SnakeGame';
 
 export const GAME_MODULES: GameModule[] = [
   ClickerGame,
+  SnakeGame,
 ];
 
 export function moduleById(id: string): GameModule | undefined {
