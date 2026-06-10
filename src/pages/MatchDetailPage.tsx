@@ -10,12 +10,13 @@ import { reportScore } from '../games/reportScore';
 import type { Match, ShifumiMetadata, ShifumiPick } from '../api/types';
 import { SHIFUMI_EMOJIS, SHIFUMI_LABELS, SHIFUMI_PICKS } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
+import { MatchResultModal } from '../ui/MatchResultModal';
 
 export function MatchDetailPage() {
   const { id = '' } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();
-  const { user } = useAuth();
+  const { user, setUser } = useAuth();
 
   const { data: m } = useQuery({
     queryKey: ['match', id],
@@ -59,20 +60,41 @@ export function MatchDetailPage() {
   // Pour 'cancelled', on file sur / 3.5s plus tard — laisse le temps au panneau
   // "X a refusé ton invitation" d'être lu.
   const arrivedStatusRef = useRef<string | null>(null);
+  const [showResultModal, setShowResultModal] = useState(false);
   useEffect(() => {
     if (!m) return;
     if (arrivedStatusRef.current === null) arrivedStatusRef.current = m.status;
     if (m.status === 'finished' && arrivedStatusRef.current !== 'finished') {
-      const t = window.setTimeout(() => nav('/', { replace: true }), 2_000);
+      // Affiche le modal de gains pendant ~2.5s puis redirige
+      setShowResultModal(true);
+      // Met à jour le solde de coins côté AuthContext si on a un reward
+      const rewards = (m.metadata as { rewards?: import('../api/types').MatchRewards } | null)?.rewards;
+      if (rewards && user) {
+        const mine = m.player1Id === user.id ? rewards.p1 : m.player2Id === user.id ? rewards.p2 : null;
+        if (mine && typeof user.coins === 'number') {
+          setUser({ ...user, coins: user.coins + mine.coinsDelta });
+        }
+      }
+      const t = window.setTimeout(() => {
+        setShowResultModal(false);
+        nav('/', { replace: true });
+      }, 2_500);
       return () => clearTimeout(t);
     }
     if (m.status === 'cancelled' && arrivedStatusRef.current !== 'cancelled') {
       const t = window.setTimeout(() => nav('/', { replace: true }), 3_500);
       return () => clearTimeout(t);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [m?.status, nav]);
 
   if (!m) return <Shell title="Match" onBack={() => nav(-1)}>…</Shell>;
+
+  // Modal de résultat affiché par-dessus l'UI normale dès que le match passe
+  // à finished. Disparait après ~2.5s (en même temps que le redirect).
+  const resultModalNode = (showResultModal && user && m.status === 'finished')
+    ? <MatchResultModal match={m} myUserId={user.id} />
+    : null;
 
   // Match annulé (refus d'invitation ou annulation explicite) : on affiche un
   // panneau dédié plutôt que de tomber sur le scoreboard par défaut, qui
@@ -145,6 +167,7 @@ export function MatchDetailPage() {
   if (m.game === 'shifumi') {
     return (
       <Shell title={displayGame(m.game)} onBack={() => nav(-1)} action={<StatusBadge status={m.status} />}>
+        {resultModalNode}
         <ShifumiView match={m} />
       </Shell>
     );
@@ -173,6 +196,7 @@ export function MatchDetailPage() {
 
   return (
     <Shell title={displayGame(m.game)} onBack={() => nav(-1)} action={<StatusBadge status={m.status} />}>
+      {resultModalNode}
       <div className="panel" style={{ padding: '40px 30px' }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-around', gap: 30 }}>
           <PlayerSide

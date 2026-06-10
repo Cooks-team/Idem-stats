@@ -43,6 +43,23 @@ export interface ShifumiMetadata {
   bestOf?: 1 | 3 | 5;
   seriesP1?: number;
   seriesP2?: number;
+  // Rewards inscrits par le serveur à la finalisation
+  rewards?: MatchRewards;
+}
+
+// Récompenses calculées à la fin d'un match, stockées dans metadata.rewards.
+// Permet au front d'afficher un modal "Tu as gagné +24 ELO, +50 🪙" sans
+// recalculer côté client.
+export interface MatchRewardEntry {
+  eloBefore: number;
+  eloAfter: number;
+  eloDelta: number;   // peut être négatif si défaite
+  coinsDelta: number; // toujours ≥ 0 (REWARD_LOSS = +10 minimum)
+}
+export interface MatchRewards {
+  winnerId: string | null;
+  p1?: MatchRewardEntry;
+  p2?: MatchRewardEntry;
 }
 
 export interface ShifumiRoundEntry {

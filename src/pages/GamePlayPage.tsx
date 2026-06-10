@@ -8,6 +8,8 @@ import { absoluteAvatar, api } from '../api/client';
 import type { Match } from '../api/types';
 import { moduleById } from '../games/GameModule';
 import { reportScore } from '../games/reportScore';
+import { useAuth } from '../auth/AuthContext';
+import { MatchResultModal } from '../ui/MatchResultModal';
 
 type Phase = 'setup' | 'playing' | 'done';
 
@@ -46,6 +48,7 @@ export function GamePlayPage() {
     onError: (e) => setError(humanize(e)),
   });
 
+  const { user, setUser } = useAuth();
   const reportMut = useMutation({
     mutationFn: ({ p1, p2 }: { p1: number; p2: number }) => reportScore(match!.id, p1, p2),
     onSuccess: (m) => {
@@ -53,6 +56,14 @@ export function GamePlayPage() {
       setPhase('done');
       qc.invalidateQueries({ queryKey: ['matches'] });
       qc.invalidateQueries({ queryKey: ['leaderboard'] });
+      // Sync solde de coins après le crédit serveur (gain de match)
+      const rewards = (m.metadata as { rewards?: import('../api/types').MatchRewards } | null)?.rewards;
+      if (rewards && user) {
+        const mine = m.player1Id === user.id ? rewards.p1 : m.player2Id === user.id ? rewards.p2 : null;
+        if (mine && typeof user.coins === 'number') {
+          setUser({ ...user, coins: user.coins + mine.coinsDelta });
+        }
+      }
     },
     onError: (e) => setError(humanize(e)),
   });
@@ -143,6 +154,11 @@ export function GamePlayPage() {
             player2={match.player2 ? { pseudo: match.player2.pseudo, avatarUrl: absoluteAvatar(match.player2.avatarUrl ?? null) } : undefined}
           />
         </div>
+      )}
+
+      {/* Modal de gains (ELO + coins) au-dessus du panel done */}
+      {phase === 'done' && match && user && (
+        <MatchResultModal match={match} myUserId={user.id} />
       )}
 
       {phase === 'done' && match && (
