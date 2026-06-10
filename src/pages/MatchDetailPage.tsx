@@ -36,6 +36,20 @@ export function MatchDetailPage() {
     onSuccess: (updated) => qc.setQueryData(['match', id], updated),
   });
 
+  // Si le match TRANSITIONNE vers finished pendant qu'on est sur la page
+  // (i.e. on est arrivé sur un match pending/active et il vient de se terminer),
+  // on file sur le classement 2s plus tard. Si on arrive sur un match déjà fini
+  // (consultation d'historique), on ne redirige pas.
+  const arrivedStatusRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!m) return;
+    if (arrivedStatusRef.current === null) arrivedStatusRef.current = m.status;
+    if (m.status === 'finished' && arrivedStatusRef.current !== 'finished') {
+      const t = window.setTimeout(() => nav('/', { replace: true }), 2_000);
+      return () => clearTimeout(t);
+    }
+  }, [m?.status, nav]);
+
   if (!m) return <Shell title="Match" onBack={() => nav(-1)}>…</Shell>;
 
   const bumpP1 = (d: number) => patchMut.mutate({ p1: Math.max(0, m.scoreP1 + d), p2: m.scoreP2 });
