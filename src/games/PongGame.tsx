@@ -103,6 +103,8 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
       s.paddles = { ...snapshot.paddles };
       s.ball = { ...snapshot.ball };
       setScore(snapshot.score);
+      // Auto-start guest dès qu'un state arrive
+      setPhase((p) => (p === 'ready' ? 'running' : p));
     },
   });
   const sentGuestRef = useRef<{ up: boolean; down: boolean }>({ up: false, down: false });
@@ -318,15 +320,21 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
           </div>
         </div>
       )}
-      {phase === 'ready' && (
+      {phase === 'ready' && mode !== 'guest' && (
         <>
           <button className="btn btn-accent btn-lg" onClick={start}>Démarrer</button>
           <div style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center' }}>
             {mode === 'local'
               ? <>🔵 J2 (gauche) : Z/S ou W/S &nbsp;·&nbsp; 🔴 J1 (droite) : ↑ ↓ &nbsp;·&nbsp; Premier à {WIN_SCORE}.</>
-              : <>Tu pilotes <strong>{mode === 'host' ? '🔴 J1 (droite)' : '🔵 J2 (gauche)'}</strong> avec {myScheme === 'arrows' ? 'les flèches' : 'Z/S ou W/S'}. Premier à {WIN_SCORE}.{mode === 'guest' && ' Distance : J1 fait tourner la partie.'}</>}
+              : <>Tu pilotes <strong>🔴 J1 (droite)</strong> avec {myScheme === 'arrows' ? 'les flèches' : 'Z/S ou W/S'}. Premier à {WIN_SCORE}.{mode === 'host' && ' Mode distance — c\'est toi qui lances la partie.'}</>}
           </div>
         </>
+      )}
+      {phase === 'ready' && mode === 'guest' && (
+        <div style={{ color: 'var(--muted)', fontSize: 14, textAlign: 'center', padding: '10px 0' }}>
+          ⚡ Tu es <strong style={{ color: '#5B8CFF' }}>🔵 J2 (gauche)</strong>. Contrôles : <strong>{myScheme === 'arrows' ? 'flèches' : 'Z/S'}</strong>.<br />
+          <span style={{ opacity: 0.85 }}>En attente que ton adversaire lance la partie…</span>
+        </div>
       )}
       {phase === 'running' && (
         <div style={{ color: 'var(--muted)', fontSize: 13 }}>Premier à {WIN_SCORE} points gagne.</div>
