@@ -299,20 +299,32 @@ function KartGameImpl({ onFinish, player1, player2, mode = 'local', matchId }: G
       }
       firstCamFrame = false;
 
-      // Rendu (1 ou 2 viewports)
-      const W = handles.renderer.domElement.width;
-      const H = handles.renderer.domElement.height;
+      // Rendu (1 ou 2 viewports).
+      // ATTENTION : THREE.WebGLRenderer.setViewport prend des dimensions
+      // CSS (pas buffer) et les multiplie par pixelRatio en interne. Si on
+      // passe handles.renderer.domElement.width (qui EST en buffer pixels),
+      // le viewport résultant est 2× la taille réelle → tout est rendu dans
+      // un quart de l'image et le centre de la caméra tombe au bord droit.
+      // C'est le bug "kart au coin haut-droit" qu'on traînait depuis 4
+      // commits. Solution : utiliser renderer.getSize() qui retourne les
+      // dimensions CSS, et NE PAS appeler setViewport en mode 1-viewport
+      // (setSize l'a déjà fait correctement).
       if (splitScreen) {
+        const size = new THREE.Vector2();
+        handles.renderer.getSize(size);
+        const cssW = size.x;
+        const cssH = size.y;
         handles.renderer.setScissorTest(true);
-        handles.renderer.setViewport(0, H / 2, W, H / 2);
-        handles.renderer.setScissor(0, H / 2, W, H / 2);
+        handles.renderer.setViewport(0, cssH / 2, cssW, cssH / 2);
+        handles.renderer.setScissor(0, cssH / 2, cssW, cssH / 2);
         handles.renderer.render(handles.scene, handles.cameras[0]);
-        handles.renderer.setViewport(0, 0, W, H / 2);
-        handles.renderer.setScissor(0, 0, W, H / 2);
+        handles.renderer.setViewport(0, 0, cssW, cssH / 2);
+        handles.renderer.setScissor(0, 0, cssW, cssH / 2);
         handles.renderer.render(handles.scene, handles.cameras[1]);
         handles.renderer.setScissorTest(false);
       } else {
-        handles.renderer.setViewport(0, 0, W, H);
+        // PAS de setViewport — setSize a déjà posé le viewport plein-canvas
+        // avec les bonnes dimensions CSS.
         handles.renderer.render(handles.scene, handles.cameras[0]);
       }
 
