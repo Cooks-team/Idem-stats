@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
+import { useRemoteGameSync } from '../realtime/useRemoteGameSync';
 
 // Pong classique 1v1 sur le même écran. Premier à 11 gagne.
 //   J1 (rouge, gauche)  : ↑ ↓
@@ -40,46 +41,136 @@ export const PongGame: GameModule = {
   Component: PongComponent,
 };
 
-function PongComponent({ onFinish }: GameProps) {
+type PongScheme = 'arrows' | 'zqsd';
+interface PongStateMsg { paddles: Paddles; ball: Ball; score: { p1: number; p2: number } }
+interface PongInputMsg { dir: 'up' | 'down'; state: 'down' | 'up' }
+
+function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [phase, setPhase] = useState<'ready' | 'running' | 'done'>('ready');
-  const stateRef = useRef<{ paddles: Paddles; ball: Ball; keys: Set<string> }>({
+  const [myScheme, setMyScheme] = useState<PongScheme>(mode === 'guest' ? 'zqsd' : 'arrows');
+  const stateRef = useRef<{ paddles: Paddles; ball: Ball; keys: Set<string>; guestUp: boolean; guestDown: boolean }>({
     paddles: { p1Y: (H - PADDLE_H) / 2, p2Y: (H - PADDLE_H) / 2 },
     ball: initBall(1),
     keys: new Set(),
+    guestUp: false,
+    guestDown: false,
   });
   const [score, setScore] = useState({ p1: 0, p2: 0 });
+
+  const { sendInput, sendState } = useRemoteGameSync<PongInputMsg, PongStateMsg>({
+    matchId: matchId ?? null,
+    role: mode,
+    onInput: (input) => {
+      // Host : applique l'input du guest (J2)
+      const s = stateRef.current;
+      if (input.dir === 'up') s.guestUp = input.state === 'down';
+      else s.guestDown = input.state === 'down';
+    },
+    onState: (snapshot) => {
+      // Guest : copie l'état pour rendre
+      const s = stateRef.current;
+      s.paddles = { ...snapshot.paddles };
+      s.ball = { ...snapshot.ball };
+      setScore(snapshot.score);
+    },
+  });
+  const sentGuestRef = useRef<{ up: boolean; down: boolean }>({ up: false, down: false });
 
   const start = () => {
     stateRef.current = {
       paddles: { p1Y: (H - PADDLE_H) / 2, p2Y: (H - PADDLE_H) / 2 },
       ball: initBall(Math.random() < 0.5 ? 1 : -1),
       keys: new Set(),
+      guestUp: false,
+      guestDown: false,
     };
     setScore({ p1: 0, p2: 0 });
+    sentGuestRef.current = { up: false, down: false };
     setPhase('running');
   };
 
-  // Touches : on stocke les touches enfoncées et on lit l'état dans le tick (mouvement continu)
+  // Touches : adapté au mode
   useEffect(() => {
     if (phase !== 'running') return;
-    const down = (e: KeyboardEvent) => { stateRef.current.keys.add(e.key.toLowerCase()); if (isHandled(e.key)) e.preventDefault(); };
-    const up   = (e: KeyboardEvent) => { stateRef.current.keys.delete(e.key.toLowerCase()); };
+    const keyToDir = (k: string): 'up' | 'down' | null => {
+      const scheme = mode === 'local' ? null : myScheme;
+      if (scheme === null) return null; // local : on garde les keys brutes
+      if (scheme === 'arrows') {
+        if (k === 'arrowup') return 'up';
+        if (k === 'arrowdown') return 'down';
+      } else {
+        if (k === 'z' || k === 'w') return 'up';
+        if (k === 's') return 'down';
+      }
+      return null;
+    };
+    const down = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      if (mode === 'local') {
+        stateRef.current.keys.add(k);
+        if (isHandled(e.key)) e.preventDefault();
+        return;
+      }
+      const dir = keyToDir(k);
+      if (!dir) return;
+      e.preventDefault();
+      if (mode === 'host') {
+        // J1 (host) : applique direct via keys
+        stateRef.current.keys.add(dir === 'up' ? 'arrowup' : 'arrowdown');
+      } else {
+        // Guest : envoie au host (dédup)
+        const cur = sentGuestRef.current;
+        if (!cur[dir]) {
+          cur[dir] = true;
+          sendInput({ dir, state: 'down' });
+        }
+      }
+    };
+    const up = (e: KeyboardEvent) => {
+      const k = e.key.toLowerCase();
+      if (mode === 'local') {
+        stateRef.current.keys.delete(k);
+        return;
+      }
+      const dir = keyToDir(k);
+      if (!dir) return;
+      if (mode === 'host') {
+        stateRef.current.keys.delete(dir === 'up' ? 'arrowup' : 'arrowdown');
+      } else {
+        const cur = sentGuestRef.current;
+        if (cur[dir]) {
+          cur[dir] = false;
+          sendInput({ dir, state: 'up' });
+        }
+      }
+    };
     window.addEventListener('keydown', down);
     window.addEventListener('keyup', up);
     return () => { window.removeEventListener('keydown', down); window.removeEventListener('keyup', up); };
-  }, [phase]);
+  }, [phase, mode, myScheme, sendInput]);
 
-  // Boucle de jeu
+  // Boucle de jeu — seulement host ou local
   useEffect(() => {
     if (phase !== 'running') return;
+    if (mode === 'guest') return;
+    const lastBroadcast = { t: 0 };
     const interval = window.setInterval(() => {
       const s = stateRef.current;
       // 1) Bouge les raquettes
-      if (s.keys.has('arrowup'))   s.paddles.p1Y = Math.max(0, s.paddles.p1Y - PADDLE_SPEED);
-      if (s.keys.has('arrowdown')) s.paddles.p1Y = Math.min(H - PADDLE_H, s.paddles.p1Y + PADDLE_SPEED);
-      if (s.keys.has('z') || s.keys.has('w')) s.paddles.p2Y = Math.max(0, s.paddles.p2Y - PADDLE_SPEED);
-      if (s.keys.has('s')) s.paddles.p2Y = Math.min(H - PADDLE_H, s.paddles.p2Y + PADDLE_SPEED);
+      // J1 (host ou local) : flèches OU zqsd (peu importe en host car listener filtre)
+      if (s.keys.has('arrowup') || s.keys.has('z') || s.keys.has('w'))   s.paddles.p1Y = Math.max(0, s.paddles.p1Y - PADDLE_SPEED);
+      if (s.keys.has('arrowdown') || s.keys.has('s')) s.paddles.p1Y = Math.min(H - PADDLE_H, s.paddles.p1Y + PADDLE_SPEED);
+      // J2 :
+      //  - en local : zqsd locales
+      //  - en host  : inputs guest (guestUp/Down)
+      if (mode === 'local') {
+        if (s.keys.has('z') || s.keys.has('w')) s.paddles.p2Y = Math.max(0, s.paddles.p2Y - PADDLE_SPEED);
+        if (s.keys.has('s')) s.paddles.p2Y = Math.min(H - PADDLE_H, s.paddles.p2Y + PADDLE_SPEED);
+      } else {
+        if (s.guestUp)   s.paddles.p2Y = Math.max(0, s.paddles.p2Y - PADDLE_SPEED);
+        if (s.guestDown) s.paddles.p2Y = Math.min(H - PADDLE_H, s.paddles.p2Y + PADDLE_SPEED);
+      }
 
       // 2) Bouge la balle
       s.ball.x += s.ball.vx;
@@ -118,7 +209,20 @@ function PongComponent({ onFinish }: GameProps) {
         s.ball = initBall(-1);
       }
 
-      // 6) Dessin
+      // 6) Broadcast state au guest (host)
+      if (mode === 'host' && matchId) {
+        const now = performance.now();
+        if (now - lastBroadcast.t >= 33) {
+          lastBroadcast.t = now;
+          sendState({
+            paddles: { ...s.paddles },
+            ball: { ...s.ball },
+            score,
+          });
+        }
+      }
+
+      // 7) Dessin
       const c = canvasRef.current;
       if (c) {
         const ctx = c.getContext('2d');
@@ -126,7 +230,23 @@ function PongComponent({ onFinish }: GameProps) {
       }
     }, TICK_MS);
     return () => clearInterval(interval);
-  }, [phase, onFinish]);
+  }, [phase, mode, matchId, sendState, onFinish, score]);
+
+  // Boucle rendu guest
+  useEffect(() => {
+    if (phase !== 'running' || mode !== 'guest') return;
+    let raf = 0;
+    const tick = () => {
+      const c = canvasRef.current;
+      if (c) {
+        const ctx = c.getContext('2d');
+        if (ctx) draw(ctx, stateRef.current);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [phase, mode]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
@@ -140,11 +260,22 @@ function PongComponent({ onFinish }: GameProps) {
         height={H}
         style={{ background: '#0B0D10', borderRadius: 14, border: '1px solid var(--line)', maxWidth: '100%', height: 'auto' }}
       />
+      {phase === 'ready' && mode !== 'local' && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+          <div className="eyebrow"><span className="label">Tes contrôles</span></div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className={`chip ${myScheme === 'arrows' ? 'active accent' : ''}`} onClick={() => setMyScheme('arrows')}>Flèches ↑↓</button>
+            <button type="button" className={`chip ${myScheme === 'zqsd' ? 'active accent' : ''}`} onClick={() => setMyScheme('zqsd')}>Z/S ou W/S</button>
+          </div>
+        </div>
+      )}
       {phase === 'ready' && (
         <>
           <button className="btn btn-accent btn-lg" onClick={start}>Démarrer</button>
           <div style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center' }}>
-            🔵 J2 (gauche) : Z/S ou W/S &nbsp;·&nbsp; 🔴 J1 (droite) : ↑ ↓ &nbsp;·&nbsp; Premier à {WIN_SCORE}.
+            {mode === 'local'
+              ? <>🔵 J2 (gauche) : Z/S ou W/S &nbsp;·&nbsp; 🔴 J1 (droite) : ↑ ↓ &nbsp;·&nbsp; Premier à {WIN_SCORE}.</>
+              : <>Tu pilotes <strong>{mode === 'host' ? '🔴 J1 (droite)' : '🔵 J2 (gauche)'}</strong> avec {myScheme === 'arrows' ? 'les flèches' : 'Z/S ou W/S'}. Premier à {WIN_SCORE}.{mode === 'guest' && ' Distance : J1 fait tourner la partie.'}</>}
           </div>
         </>
       )}
