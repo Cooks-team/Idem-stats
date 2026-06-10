@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { absoluteAvatar, api } from '../api/client';
@@ -217,6 +217,8 @@ function ShifumiRemotePending({ match: m }: { match: Match }) {
   const { user } = useAuth();
   const qc = useQueryClient();
   const isCreator = m.player1Id === user?.id;
+  const myPick = isCreator ? meta.creatorPick : meta.opponentPick;
+  const opponentPseudo = isCreator ? (m.player2?.pseudo ?? 'l\'adversaire') : (m.player1?.pseudo ?? 'l\'adversaire');
 
   const pickMut = useMutation({
     mutationFn: (p: ShifumiPick) => api.shifumiPick(m.id, p),
@@ -224,39 +226,92 @@ function ShifumiRemotePending({ match: m }: { match: Match }) {
   });
   const [chosen, setChosen] = useState<ShifumiPick | null>(null);
 
-  // Creator : son pick lui est renvoyé par l'API (creatorPick visible côté lui).
-  if (isCreator) {
+  // Détection d'un tie qui vient de se conclure : on affiche un flash "Égalité !"
+  // pendant 1.6 s puis on bascule sur l'UI de re-pick.
+  const [tieReveal, setTieReveal] = useState<{ round: number; mine: ShifumiPick; theirs: ShifumiPick } | null>(null);
+  const prevHistoryLen = useRef<number>(meta.history?.length ?? 0);
+  useEffect(() => {
+    const histLen = meta.history?.length ?? 0;
+    if (histLen > prevHistoryLen.current && meta.lastTieRound) {
+      // Un tour vient d'être ajouté avec lastTieRound → c'était une égalité
+      const last = meta.history?.[histLen - 1];
+      if (last?.tie) {
+        setTieReveal({
+          round: last.round,
+          mine: isCreator ? last.creatorPick : last.opponentPick,
+          theirs: isCreator ? last.opponentPick : last.creatorPick,
+        });
+        const t = setTimeout(() => setTieReveal(null), 1600);
+        prevHistoryLen.current = histLen;
+        return () => clearTimeout(t);
+      }
+    }
+    prevHistoryLen.current = histLen;
+  }, [meta.history, meta.lastTieRound, isCreator]);
+
+  // Flash d'égalité (juste après une résolution nulle)
+  if (tieReveal) {
     return (
-      <div className="panel" style={{ padding: 40, textAlign: 'center' }}>
-        {meta.condition && (
-          <div style={{ marginBottom: 16, color: 'var(--accent)', fontWeight: 700, fontSize: 14 }}>
-            🎯 Enjeu : {meta.condition}
-          </div>
-        )}
-        <div style={{ color: 'var(--muted)', fontSize: 13 }}>Ton choix (secret)</div>
-        <div style={{ fontSize: 96, lineHeight: 1, marginTop: 6 }}>{meta.creatorPick ? SHIFUMI_EMOJIS[meta.creatorPick] : '🤐'}</div>
-        <div style={{ marginTop: 16, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 24 }}>
-          En attente de {m.player2?.pseudo ?? 'l\'adversaire'}…
+      <div className="panel" style={{ padding: 60, textAlign: 'center', minHeight: 320 }}>
+        <div style={{ color: 'var(--muted)', fontSize: 13 }}>Round {tieReveal.round}</div>
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 24, marginTop: 18 }}>
+          <div style={{ fontSize: 96, lineHeight: 1 }}>{SHIFUMI_EMOJIS[tieReveal.mine]}</div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 60, color: 'var(--muted)' }}>=</div>
+          <div style={{ fontSize: 96, lineHeight: 1 }}>{SHIFUMI_EMOJIS[tieReveal.theirs]}</div>
         </div>
-        <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 6 }}>
-          On rafraîchit toutes les 2 secondes. Tu seras notifié quand il/elle aura répondu.
+        <div style={{ marginTop: 22, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 36, color: 'var(--accent)' }}>
+          ÉGALITÉ !
+        </div>
+        <div style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>
+          On relance — round {tieReveal.round + 1} dans une seconde…
         </div>
       </div>
     );
   }
 
-  // Opponent : doit choisir, son choix déclenche le reveal.
+  const headerCondition = meta.condition && (
+    <div style={{ marginBottom: 16, color: 'var(--accent)', fontWeight: 700, fontSize: 14 }}>
+      🎯 Enjeu : {meta.condition}
+    </div>
+  );
+  const headerRound = (meta.round ?? 1) > 1 && (
+    <div style={{ marginBottom: 10, color: 'var(--muted)', fontSize: 12.5 }}>
+      Round {meta.round} · {meta.history?.length ?? 0} égalité{(meta.history?.length ?? 0) > 1 ? 's' : ''}
+    </div>
+  );
+
+  // Mon pick est posé → j'attends l'autre
+  if (myPick) {
+    return (
+      <div className="panel" style={{ padding: 40, textAlign: 'center' }}>
+        {headerCondition}
+        {headerRound}
+        <div style={{ color: 'var(--muted)', fontSize: 13 }}>Ton choix (secret)</div>
+        <div style={{ fontSize: 96, lineHeight: 1, marginTop: 6 }}>{SHIFUMI_EMOJIS[myPick]}</div>
+        <div style={{ marginTop: 16, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 24 }}>
+          En attente de {opponentPseudo}…
+        </div>
+        <div style={{ color: 'var(--muted)', fontSize: 13, marginTop: 6 }}>
+          On rafraîchit toutes les 2 secondes.
+        </div>
+      </div>
+    );
+  }
+
+  // Sinon, je dois pioche
+  const headerTitle = (meta.round ?? 1) === 1
+    ? `${opponentPseudo} te défie au Shifumi`
+    : `Round ${meta.round} — re-pick !`;
+  const sub = (meta.round ?? 1) === 1
+    ? 'Choisis ta main. Le reveal se déclenchera dès que tu valides.'
+    : 'Égalité au round précédent. Choisis à nouveau.';
+
   return (
     <div className="panel" style={{ padding: 40, textAlign: 'center' }}>
-      {meta.condition && (
-        <div style={{ marginBottom: 16, color: 'var(--accent)', fontWeight: 700, fontSize: 14 }}>
-          🎯 Enjeu : {meta.condition}
-        </div>
-      )}
-      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 26 }}>
-        {m.player1?.pseudo ?? 'L\'adversaire'} te défie au Shifumi
-      </div>
-      <p style={{ color: 'var(--muted)', marginTop: 6 }}>Choisis ta main. Le reveal se déclenchera dès que tu valides.</p>
+      {headerCondition}
+      {headerRound}
+      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 26 }}>{headerTitle}</div>
+      <p style={{ color: 'var(--muted)', marginTop: 6 }}>{sub}</p>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginTop: 18 }}>
         {SHIFUMI_PICKS.map((p) => (
           <button
@@ -280,7 +335,7 @@ function ShifumiRemotePending({ match: m }: { match: Match }) {
         disabled={!chosen || pickMut.isPending}
         onClick={() => chosen && pickMut.mutate(chosen)}
       >
-        {pickMut.isPending ? 'Reveal en cours…' : '🪨📄✂️ Valider et révéler'}
+        {pickMut.isPending ? '…' : '🪨📄✂️ Valider'}
       </button>
     </div>
   );
@@ -355,6 +410,29 @@ function ShifumiResult({ match: m, animate }: { match: Match; animate: boolean }
       }}>
         {meta.tie ? '⚖️ Match nul' : `🏆 ${winnerPseudo} gagne — ${reason}`}
       </div>
+
+      {/* Historique des rounds (uniquement si > 1 round, càd s'il y a eu des égalités avant) */}
+      {meta.history && meta.history.length > 1 && (
+        <div style={{ marginTop: 28 }}>
+          <div className="eyebrow" style={{ justifyContent: 'center' }}>
+            <span className="label">Rounds joués</span>
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center' }}>
+            {meta.history.map((h) => (
+              <div key={h.round} style={{
+                padding: '8px 14px', borderRadius: 12,
+                background: h.tie ? 'var(--surface)' : 'color-mix(in srgb, var(--win) 12%, var(--surface))',
+                border: '1px solid var(--line)', fontSize: 13,
+              }}>
+                <span style={{ color: 'var(--muted)', marginRight: 6 }}>R{h.round}</span>
+                {SHIFUMI_EMOJIS[h.creatorPick]} vs {SHIFUMI_EMOJIS[h.opponentPick]}
+                {h.tie ? <span style={{ color: 'var(--muted)', marginLeft: 6 }}>(égalité)</span>
+                       : <span style={{ color: 'var(--win)', marginLeft: 6 }}>→ {h.winnerPseudo}</span>}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
