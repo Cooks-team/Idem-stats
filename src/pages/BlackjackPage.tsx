@@ -52,16 +52,36 @@ export function BlackjackPage() {
   const [dealerName] = useState(() => DEALER_NAMES[Math.floor(Math.random() * DEALER_NAMES.length)]);
   const [bet, setBet] = useState(20);
   const [phase, setPhase] = useState<Phase>('betting');
-  const [playerHand, setPlayerHand] = useState<Card[]>([]);
+  // Tableau de mains pour gérer le SPLIT — par défaut 1 seule main, jusqu'à 2
+  // après un split. handBets et handResults sont parallèles à playerHands.
+  const [playerHands, setPlayerHands] = useState<Card[][]>([]);
+  const [handBets, setHandBets] = useState<number[]>([]);
+  const [handResults, setHandResults] = useState<RoundResult[]>([]);
+  const [currentHandIndex, setCurrentHandIndex] = useState(0);
+  const [splitFromAces, setSplitFromAces] = useState(false);
   const [dealerHand, setDealerHand] = useState<Card[]>([]);
-  const [result, setResult] = useState<RoundResult>(null);
-  const [payout, setPayout] = useState(0);
+  // Total payout après la résolution finale (somme sur toutes les mains)
+  const [totalPayout, setTotalPayout] = useState(0);
+  const [totalBetCommitted, setTotalBetCommitted] = useState(0);
+  // Résultat "synthétique" pour le banner (la meilleure issue parmi les mains)
+  const [bannerResult, setBannerResult] = useState<RoundResult>(null);
   const deckRef = useRef<Card[]>([]);
 
   const coins = user?.coins ?? 0;
   const canBet = phase === 'betting' && bet >= 5 && bet <= coins;
-  // Place du joueur courant : place du milieu (index 2 sur 6 places 0..5)
   const mySeatIndex = 2;
+
+  // Calculs pour les boutons Double/Split — basés sur la main courante
+  const currentHand: Card[] = playerHands[currentHandIndex] ?? [];
+  const currentBet: number = handBets[currentHandIndex] ?? bet;
+  const canDouble = phase === 'player'
+                    && currentHand.length === 2
+                    && (coins - totalBetCommitted) >= currentBet;
+  const canSplit = phase === 'player'
+                   && currentHand.length === 2
+                   && currentHand[0].rank === currentHand[1].rank
+                   && playerHands.length === 1
+                   && (coins - totalBetCommitted) >= currentBet;
 
   const roundMut = useMutation({
     mutationFn: ({ bet, payout }: { bet: number; payout: number }) => api.blackjackRound(bet, payout),
@@ -79,16 +99,20 @@ export function BlackjackPage() {
     const d1 = deck.pop()!;
     const p2 = deck.pop()!;
     const d2: Card = { ...deck.pop()!, hidden: true };
-    setPlayerHand([]);
+    setPlayerHands([[]]);
+    setHandBets([bet]);
+    setHandResults([null]);
+    setCurrentHandIndex(0);
+    setSplitFromAces(false);
     setDealerHand([]);
-    setResult(null);
-    setPayout(0);
+    setBannerResult(null);
+    setTotalPayout(0);
+    setTotalBetCommitted(bet);
     setPhase('dealing');
 
-    // Distribution séquentielle
-    setTimeout(() => setPlayerHand([p1]),        0);
+    setTimeout(() => setPlayerHands([[p1]]),     0);
     setTimeout(() => setDealerHand([d1]),       350);
-    setTimeout(() => setPlayerHand([p1, p2]),   700);
+    setTimeout(() => setPlayerHands([[p1, p2]]), 700);
     setTimeout(() => setDealerHand([d1, d2]), 1050);
     setTimeout(() => {
       const ph = [p1, p2];
@@ -97,7 +121,7 @@ export function BlackjackPage() {
       const dealerBJ = tenLike(d1) && tenLike(d2) && (d1.rank === 'A' || d2.rank === 'A');
       if (playerBJ) {
         setDealerHand([d1, { ...d2, hidden: false }]);
-        finishRound(ph, [d1, { ...d2, hidden: false }], dealerBJ ? 'push' : 'blackjack');
+        finishRoundSingle([ph], [bet], [dealerBJ ? 'push' : 'blackjack'], [d1, { ...d2, hidden: false }]);
       } else {
         setPhase('player');
       }
@@ -107,61 +131,151 @@ export function BlackjackPage() {
   function hit() {
     if (phase !== 'player') return;
     const next = deckRef.current.pop()!;
-    const newHand = [...playerHand, next];
-    setPlayerHand(newHand);
-    const val = handValue(newHand);
-    if (val > 21) setTimeout(() => finishRound(newHand, dealerHand, 'bust'), 500);
-    else if (val === 21) setTimeout(() => stand(newHand), 400);
+    const updatedHands = playerHands.map((h, i) => i === currentHandIndex ? [...h, next] : h);
+    setPlayerHands(updatedHands);
+    const val = handValue(updatedHands[currentHandIndex]);
+    if (val > 21) {
+      const r = [...handResults];
+      r[currentHandIndex] = 'bust';
+      setHandResults(r);
+      setTimeout(() => advanceOrPlayDealer(r, updatedHands), 500);
+    } else if (val === 21) {
+      setTimeout(() => stand(updatedHands), 400);
+    }
   }
 
-  function stand(handOverride?: Card[]) {
+  function stand(handsOverride?: Card[][]) {
     if (phase !== 'player') return;
-    const ph = handOverride ?? playerHand;
+    const ph = handsOverride ?? playerHands;
+    advanceOrPlayDealer(handResults, ph);
+  }
+
+  function doubleDown() {
+    if (!canDouble) return;
+    const next = deckRef.current.pop()!;
+    const updatedHands = playerHands.map((h, i) => i === currentHandIndex ? [...h, next] : h);
+    const updatedBets  = handBets.map((b, i) => i === currentHandIndex ? b * 2 : b);
+    setPlayerHands(updatedHands);
+    setHandBets(updatedBets);
+    setTotalBetCommitted(totalBetCommitted + currentBet); // on ajoute UNE FOIS la mise initiale
+    const val = handValue(updatedHands[currentHandIndex]);
+    const r = [...handResults];
+    if (val > 21) r[currentHandIndex] = 'bust';
+    setHandResults(r);
+    // Après double, on stand obligatoirement → main suivante ou dealer
+    setTimeout(() => advanceOrPlayDealer(r, updatedHands), 600);
+  }
+
+  function split() {
+    if (!canSplit) return;
+    const hand = playerHands[0];
+    const fromAces = hand[0].rank === 'A';
+    const newCard1 = deckRef.current.pop()!;
+    const newCard2 = deckRef.current.pop()!;
+    const newHands: Card[][] = [
+      [hand[0], newCard1],
+      [hand[1], newCard2],
+    ];
+    setPlayerHands(newHands);
+    setHandBets([currentBet, currentBet]);
+    setHandResults([null, null]);
+    setCurrentHandIndex(0);
+    setSplitFromAces(fromAces);
+    setTotalBetCommitted(totalBetCommitted + currentBet);
+    // Règle classique : split d'As → 1 carte chacun puis auto-stand. On
+    // laisse l'utilisateur cliquer Rester pour ne pas casser l'UX, mais on
+    // empêche le hit avec une note dans le UI.
+  }
+
+  // Avance à la main suivante OU passe au dealer si toutes les mains du joueur
+  // sont résolues (bust ou stand).
+  function advanceOrPlayDealer(currentResults: RoundResult[], currentHands: Card[][]) {
+    const nextIdx = currentHandIndex + 1;
+    if (nextIdx < currentHands.length) {
+      setCurrentHandIndex(nextIdx);
+      // Si on revient sur une main split d'as déjà servie, on la stand auto
+      if (splitFromAces && currentHands[nextIdx].length >= 2) {
+        setTimeout(() => advanceOrPlayDealer(currentResults, currentHands), 400);
+      }
+      return;
+    }
+    // Toutes les mains jouées → dealer
     setPhase('dealer');
     const revealed = dealerHand.map((c) => ({ ...c, hidden: false }));
     setDealerHand(revealed);
-    setTimeout(() => playDealer(ph, revealed.slice()), 700);
+    // Si TOUTES les mains du joueur ont bust → dealer ne joue pas
+    const allBust = currentResults.every((r) => r === 'bust');
+    if (allBust) {
+      setTimeout(() => finishRoundSingle(currentHands, handBets, currentResults, revealed), 600);
+      return;
+    }
+    setTimeout(() => playDealer(currentHands, currentResults, revealed.slice()), 700);
   }
 
-  function playDealer(ph: Card[], dh: Card[]) {
+  function playDealer(hands: Card[][], results: RoundResult[], dh: Card[]) {
     if (handValue(dh) >= 17) {
-      const pv = handValue(ph);
+      // Compute résultat pour chaque main pas encore résolue
       const dv = handValue(dh);
-      let r: RoundResult;
-      if (dv > 21 || pv > dv) r = 'win';
-      else if (pv < dv) r = 'lose';
-      else r = 'push';
-      finishRound(ph, dh, r);
+      const finalResults: RoundResult[] = hands.map((h, i) => {
+        if (results[i]) return results[i]; // déjà bust
+        const pv = handValue(h);
+        if (dv > 21 || pv > dv) return 'win';
+        if (pv < dv) return 'lose';
+        return 'push';
+      });
+      finishRoundSingle(hands, handBets, finalResults, dh);
       return;
     }
     const next = deckRef.current.pop()!;
     const newDh = [...dh, next];
     setDealerHand(newDh);
-    setTimeout(() => playDealer(ph, newDh), 650);
+    setTimeout(() => playDealer(hands, results, newDh), 650);
   }
 
-  function finishRound(ph: Card[], dh: Card[], r: RoundResult) {
-    let p = 0;
-    if (r === 'win') p = bet * 2;
-    else if (r === 'push') p = bet;
-    else if (r === 'blackjack') p = Math.floor(bet * 2.5);
-    setResult(r);
-    setPayout(p);
+  function finishRoundSingle(hands: Card[][], bets: number[], results: RoundResult[], _dh: Card[]) {
+    let totalP = 0;
+    for (let i = 0; i < hands.length; i++) {
+      const r = results[i];
+      const b = bets[i];
+      let p = 0;
+      if (r === 'win') p = b * 2;
+      else if (r === 'push') p = b;
+      else if (r === 'blackjack') p = Math.floor(b * 2.5);
+      totalP += p;
+    }
+    setHandResults(results);
+    setTotalPayout(totalP);
     setPhase('result');
-    roundMut.mutate({ bet, payout: p });
+    // Banner result : on prend le "mieux" parmi blackjack > win > push > lose > bust
+    const priority: Record<NonNullable<RoundResult>, number> = { blackjack: 5, win: 4, push: 3, lose: 2, bust: 1 };
+    let best: RoundResult = null;
+    for (const r of results) {
+      if (r && (!best || priority[r] > priority[best])) best = r;
+    }
+    setBannerResult(best);
+    // Envoi unique avec total bet + total payout
+    const totalBet = bets.reduce((a, b) => a + b, 0);
+    roundMut.mutate({ bet: totalBet, payout: totalP });
   }
 
   function newRound() {
     setPhase('betting');
-    setPlayerHand([]);
+    setPlayerHands([]);
+    setHandBets([]);
+    setHandResults([]);
+    setCurrentHandIndex(0);
+    setSplitFromAces(false);
     setDealerHand([]);
-    setResult(null);
-    setPayout(0);
+    setBannerResult(null);
+    setTotalPayout(0);
+    setTotalBetCommitted(0);
   }
 
-  const playerTotal = handValue(playerHand);
   const dealerVisible = useMemo(() => dealerHand.filter((c) => !c.hidden), [dealerHand]);
   const dealerTotal = handValue(dealerVisible);
+  // Pour la table : on passe la main courante en visu principale (compat existante)
+  const playerHand = currentHand;
+  const playerTotal = handValue(playerHand);
 
   // Construction des 6 places — le user occupe mySeatIndex, les autres sont vides
   const seats = useMemo(() => Array.from({ length: SEAT_COUNT }, (_, i) => ({
@@ -180,11 +294,44 @@ export function BlackjackPage() {
         dealerTotal={dealerTotal}
         playerTotal={playerTotal}
         phase={phase}
-        result={result}
-        payout={payout}
-        bet={bet}
+        result={bannerResult}
+        payout={totalPayout}
+        bet={totalBetCommitted}
         mySeatIndex={mySeatIndex}
       />
+
+      {/* Si SPLIT en cours : affiche les 2 mains côte à côte avec la main
+          courante highlighted et l'autre en sous-titre */}
+      {playerHands.length > 1 && (
+        <div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginTop: 12, flexWrap: 'wrap' }}>
+          {playerHands.map((h, i) => {
+            const v = handValue(h);
+            const r = handResults[i];
+            const isCurrent = i === currentHandIndex && phase === 'player';
+            return (
+              <div key={i} style={{
+                padding: '8px 14px', borderRadius: 12,
+                background: isCurrent ? 'color-mix(in oklab, var(--accent) 18%, var(--surface))' : 'var(--surface)',
+                border: `2px solid ${isCurrent ? 'var(--accent)' : 'var(--line)'}`,
+                minWidth: 130, textAlign: 'center',
+              }}>
+                <div style={{ fontSize: 11, color: 'var(--muted)', letterSpacing: 0.5, fontWeight: 700 }}>
+                  MAIN {i + 1} {r === 'bust' ? '· BUST' : r === 'win' ? '· GAIN' : r === 'lose' ? '· PERTE' : r === 'push' ? '· NUL' : r === 'blackjack' ? '· BJ' : ''}
+                </div>
+                <div style={{
+                  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 24,
+                  color: v > 21 ? '#FF6B57' : v === 21 ? '#D6FF3D' : 'var(--text)', marginTop: 2,
+                }}>
+                  {h.map(c => `${c.rank}${c.suit}`).join(' ')} <span style={{ fontSize: 16, color: 'var(--muted)' }}>· {v}</span>
+                </div>
+                <div style={{ fontSize: 11, color: '#FFD700', marginTop: 2 }}>
+                  Mise : {handBets[i]} 🪙
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Contrôles sous la table */}
       <div style={{ marginTop: 18, display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }}>
@@ -193,8 +340,25 @@ export function BlackjackPage() {
         )}
         {phase === 'player' && (
           <>
-            <button className="btn btn-accent btn-lg" onClick={hit}>🃏 Tirer</button>
+            <button
+              className="btn btn-accent btn-lg"
+              onClick={hit}
+              disabled={splitFromAces}
+              title={splitFromAces ? 'Pas de tirage supplémentaire après split d\'As' : undefined}
+            >🃏 Tirer</button>
             <button className="btn btn-line btn-lg" onClick={() => stand()}>✋ Rester</button>
+            <button
+              className="btn btn-line btn-lg"
+              onClick={doubleDown}
+              disabled={!canDouble}
+              title={!canDouble ? 'Double dispo sur 2 cartes uniquement, et il faut le solde pour doubler ta mise' : undefined}
+            >⏫ Doubler</button>
+            <button
+              className="btn btn-line btn-lg"
+              onClick={split}
+              disabled={!canSplit}
+              title={!canSplit ? 'Split dispo seulement sur une paire (avant tout autre tirage)' : undefined}
+            >✂️ Split</button>
           </>
         )}
         {phase === 'result' && (
