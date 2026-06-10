@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import * as THREE from 'three';
 import type { GameProps } from '../GameModule';
 import type { GameModule } from '../GameModule';
@@ -7,8 +7,9 @@ import { buildTrack, gridStartPosition } from './track';
 import { stepKart, resolveKartCollisions, PhysicsConfig } from './physics';
 import { spawnItemBoxes, pickupItemBoxes, stepActiveItems, useItem as triggerItem, rankOfKart } from './items';
 import { botSkillFor, getBotInput } from './ai';
-import { buildScene, followKart, syncMeshes, KART_COLORS } from './scene';
+import { buildScene, followKart, syncMeshes, syncEmotes, KART_COLORS } from './scene';
 import { useRemoteGameSync } from '../../realtime/useRemoteGameSync';
+import { EMOTES } from './emotes';
 
 // 3D kart racer. 4 karts toujours en course. Modes :
 //  - local-1p (solo)   : P1 humain (flèches ou ZQSD) + 3 bots
@@ -36,10 +37,12 @@ function KartGameImpl({ onFinish, player1, player2, mode = 'local', matchId }: G
   const [hudTick, setHudTick] = useState(0);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<{ p1: KartInput; p2: KartInput }>({
     p1: emptyInput(), p2: emptyInput(),
   });
   const keysRef = useRef<Set<string>>(new Set());
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   const track = useMemo(() => buildTrack(), []);
 
@@ -144,10 +147,18 @@ function KartGameImpl({ onFinish, player1, player2, mode = 'local', matchId }: G
   // -- Inputs clavier --------------------------------------------------------
   useEffect(() => {
     const onDown = (e: KeyboardEvent) => {
-      keysRef.current.add(e.key.toLowerCase());
-      if (e.key.toLowerCase() === 'c') setFpsMode((v) => !v);
+      const k = e.key.toLowerCase();
+      keysRef.current.add(k);
+      if (k === 'c') setFpsMode((v) => !v);
+      if (k === 'f') toggleFullscreen(containerRef.current);
+      // Emotes : touches 1..8 → on déclenche immédiatement sur le kart joueur
+      if (/^[1-8]$/.test(k)) {
+        const idx = Number(k) - 1;
+        const emote = EMOTES[idx];
+        if (emote) triggerEmote(stateRef.current, myKartIdRef.current, emote.key, performance.now());
+      }
       // Empêche le scroll de page avec les flèches / espace
-      if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(e.key.toLowerCase())) {
+      if ([' ', 'arrowup', 'arrowdown', 'arrowleft', 'arrowright'].includes(k)) {
         e.preventDefault();
       }
     };
@@ -162,6 +173,20 @@ function KartGameImpl({ onFinish, player1, player2, mode = 'local', matchId }: G
     };
   }, []);
 
+  // Sync de l'état fullscreen (l'utilisateur peut sortir avec Escape)
+  useEffect(() => {
+    const onFsChange = () => setIsFullscreen(!!document.fullscreenElement);
+    document.addEventListener('fullscreenchange', onFsChange);
+    return () => document.removeEventListener('fullscreenchange', onFsChange);
+  }, []);
+
+  // Auto-fullscreen au démarrage de la course (countdown). Si l'API n'est pas
+  // dispo ou l'user refuse, on continue en mode encart classique sans bloquer.
+  useEffect(() => {
+    if (phase !== 'countdown' || !containerRef.current) return;
+    requestFullscreen(containerRef.current).catch(() => {});
+  }, [phase]);
+
   // -- Scene three.js --------------------------------------------------------
   useEffect(() => {
     if (phase === 'setup' || !canvasRef.current) return;
@@ -173,13 +198,18 @@ function KartGameImpl({ onFinish, player1, player2, mode = 'local', matchId }: G
       if (!parent) return;
       const w = parent.clientWidth;
       const h = parent.clientHeight;
-      handles.resize(w, h);
+      if (w > 0 && h > 0) handles.resize(w, h);
     };
     onResize();
     window.addEventListener('resize', onResize);
+    // ResizeObserver : couvre le cas où le parent n'a pas encore sa taille
+    // finale au mount (fullscreen, animation, layout retardé)
+    const ro = new ResizeObserver(onResize);
+    if (canvas.parentElement) ro.observe(canvas.parentElement);
 
     let raf = 0;
     let lastTs = performance.now();
+    let firstCamFrame = true;
     const lastSendStateRef = { current: 0 };
     const lastSendInputRef = { current: 0 };
     const lastHudRef = { current: 0 };
@@ -255,14 +285,18 @@ function KartGameImpl({ onFinish, player1, player2, mode = 'local', matchId }: G
 
       // Sync visuels
       syncMeshes(state, handles, tNow);
+      syncEmotes(state.karts, handles, tNow);
 
-      // Caméras
+      // Caméras — snap au premier frame (sinon le lerp depuis (0,6,10) laisse
+      // entrevoir des frames hors du circuit, et l'utilisateur a 1 seconde où
+      // il voit "que de l'herbe").
       const myKart = state.karts.find((k) => k.id === myKartIdRef.current);
-      if (handles.cameras[0] && myKart) followKart(handles.cameras[0], myKart, fpsMode, dt);
+      if (handles.cameras[0] && myKart) followKart(handles.cameras[0], myKart, fpsMode, dt, firstCamFrame);
       if (splitScreen) {
         const p2 = state.karts.find((k) => k.id === 'p2');
-        if (handles.cameras[1] && p2) followKart(handles.cameras[1], p2, fpsMode, dt);
+        if (handles.cameras[1] && p2) followKart(handles.cameras[1], p2, fpsMode, dt, firstCamFrame);
       }
+      firstCamFrame = false;
 
       // Rendu (1 ou 2 viewports)
       const W = handles.renderer.domElement.width;
@@ -296,6 +330,7 @@ function KartGameImpl({ onFinish, player1, player2, mode = 'local', matchId }: G
     return () => {
       cancelAnimationFrame(raf);
       window.removeEventListener('resize', onResize);
+      ro.disconnect();
       handles.dispose();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -357,8 +392,13 @@ function KartGameImpl({ onFinish, player1, player2, mode = 'local', matchId }: G
     );
   }
 
+  // En plein écran, on prend tout le viewport. Sinon, encart 16:9 paysage.
+  const containerStyle: CSSProperties = isFullscreen
+    ? { position: 'relative', width: '100vw', height: '100vh', background: '#6ab7ff', overflow: 'hidden' }
+    : { position: 'relative', width: '100%', aspectRatio: '16 / 9', background: '#6ab7ff', borderRadius: 12, overflow: 'hidden' };
+
   return (
-    <div style={{ position: 'relative', width: '100%', height: 600, background: '#6ab7ff', borderRadius: 12, overflow: 'hidden' }}>
+    <div ref={containerRef} style={containerStyle}>
       <canvas ref={canvasRef} style={{ display: 'block', width: '100%', height: '100%' }} />
       <Hud
         state={stateRef.current}
@@ -371,6 +411,92 @@ function KartGameImpl({ onFinish, player1, player2, mode = 'local', matchId }: G
         fpsMode={fpsMode}
         hudTick={hudTick}
       />
+      <FullscreenToggle
+        active={isFullscreen}
+        onToggle={() => toggleFullscreen(containerRef.current)}
+      />
+      <EmoteBar onPick={(key) => triggerEmote(stateRef.current, myKartIdRef.current, key, performance.now())} />
+    </div>
+  );
+}
+
+// Set le kart courant en mode emote. Si on est en remote, l'emote sera
+// transmis naturellement avec le state suivant (host) ou via input (guest).
+function triggerEmote(state: RaceState, kartId: string | null, key: string, now: number) {
+  if (!kartId) return;
+  const k = state.karts.find((x) => x.id === kartId);
+  if (!k) return;
+  k.emoteKey = key;
+  k.emoteUntil = now + 2500;
+}
+
+// ─── Fullscreen helpers ─────────────────────────────────────────────────────
+function requestFullscreen(el: HTMLElement | null): Promise<void> {
+  if (!el) return Promise.resolve();
+  if (document.fullscreenElement === el) return Promise.resolve();
+  const fn = el.requestFullscreen?.bind(el);
+  if (!fn) return Promise.resolve();
+  return fn();
+}
+function toggleFullscreen(el: HTMLElement | null) {
+  if (!el) return;
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  } else {
+    requestFullscreen(el).catch(() => {});
+  }
+}
+
+function FullscreenToggle({ active, onToggle }: { active: boolean; onToggle: () => void }) {
+  return (
+    <button
+      onClick={onToggle}
+      title={active ? 'Quitter plein écran (F ou Échap)' : 'Plein écran (F)'}
+      style={{
+        position: 'absolute', top: 12, right: 12, zIndex: 5,
+        background: 'rgba(0,0,0,0.6)', color: 'white',
+        border: '1px solid rgba(255,255,255,0.15)', borderRadius: 8,
+        padding: '6px 10px', cursor: 'pointer', fontSize: 13,
+      }}
+    >
+      {active ? '✕ Quitter' : '⛶ Plein écran'}
+    </button>
+  );
+}
+
+function EmoteBar({ onPick }: { onPick: (key: string) => void }) {
+  return (
+    <div style={{
+      position: 'absolute', bottom: 14, left: '50%', transform: 'translateX(-50%)',
+      display: 'flex', gap: 6, zIndex: 5, padding: '6px 8px',
+      background: 'rgba(0,0,0,0.55)', borderRadius: 14,
+      border: '1px solid rgba(255,255,255,0.08)',
+    }}>
+      {EMOTES.map((e, i) => (
+        <button
+          key={e.key}
+          onClick={() => onPick(e.key)}
+          title={`${e.label} — touche ${i + 1}`}
+          style={{
+            position: 'relative', width: 46, height: 46, borderRadius: 10, cursor: 'pointer',
+            background: e.bg, color: e.fg, border: 'none',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            fontSize: 24, transition: 'transform .08s ease',
+          }}
+          onMouseEnter={(ev) => { (ev.currentTarget as HTMLButtonElement).style.transform = 'scale(1.08)'; }}
+          onMouseLeave={(ev) => { (ev.currentTarget as HTMLButtonElement).style.transform = 'scale(1)'; }}
+        >
+          <span>{e.emoji}</span>
+          <span style={{
+            position: 'absolute', top: -8, right: -6,
+            background: '#0d0d10', color: '#FFD23B',
+            width: 18, height: 18, borderRadius: 9,
+            fontSize: 10, fontWeight: 800,
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            border: '1px solid #FFD23B',
+          }}>{i + 1}</span>
+        </button>
+      ))}
     </div>
   );
 }
@@ -607,9 +733,10 @@ function ControlsHelp({ twoPlayers }: { twoPlayers: boolean }) {
       ) : (
         <ul style={{ marginTop: 6, marginBottom: 0, paddingLeft: 22, lineHeight: 1.6 }}>
           <li>Avancer / tourner : flèches <strong>ou</strong> ZQSD/WASD</li>
-          <li><kbd>Espace</kbd> ou <kbd>Maj</kbd> : drift (braquage serré)</li>
+          <li><kbd>Maj</kbd> (Shift) ou <kbd>Espace</kbd> : drift (braquage serré, sortie + rapide)</li>
           <li><kbd>E</kbd> ou <kbd>Entrée</kbd> : utiliser l'item en stock</li>
-          <li><kbd>C</kbd> : cockpit / 3e personne</li>
+          <li><kbd>C</kbd> : cockpit / 3e personne &nbsp;·&nbsp; <kbd>F</kbd> : plein écran</li>
+          <li><kbd>1</kbd> à <kbd>8</kbd> : emotes (rage, clown, goat, L…)</li>
         </ul>
       )}
     </div>
