@@ -1,12 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
 
-// Billard 1v1 simplifié : 1 boule blanche + 8 colorées. Drag depuis la table
-// pour viser (direction = de la blanche vers ton pointeur, puissance = distance
-// du drag). Release pour tirer. Tour suivant après chaque coup SAUF si tu
-// pochettes une boule colorée (rejoue). Boule blanche pochée = pas de pénalité,
-// elle respawn à son point de départ. Fin de partie : quand toutes les boules
-// colorées sont pochées. Vainqueur = plus haut score (4-4 possible = nul).
+// Billard 8-ball avec les vraies règles :
+//   1. Pile ou face animé pour décider qui commence
+//   2. 15 boules en triangle : 7 solid (1-7) + 7 stripe (9-15) + noire (8)
+//      au centre du triangle (rangée 2, position centrale)
+//   3. Tant que les groupes ne sont pas attribués (open game), la 1ère
+//      boule colorée potée définit le groupe du joueur qui l'a potée.
+//      L'opponent récupère l'autre groupe.
+//   4. Une fois les groupes attribués :
+//        - tu pottes ton groupe = +1, tu rejoues
+//        - tu pottes l'autre groupe = opponent +1, tu perds ton tour
+//        - tu pottes la noire AVANT d'avoir clear ton groupe = LOSS instant
+//        - tu pottes la noire APRÈS avoir clear ton groupe = WIN instant
+//   5. Boule blanche pochée = respawn, tu perds ton tour (faute simple).
 
 const W = 720;
 const H = 380;
@@ -15,67 +22,85 @@ const POCKET_R = 18;
 const CUSHION = 14;
 const FRICTION = 0.987;
 const MIN_SPEED = 0.05;
-const POWER_SCALE = 1 / 7;   // distance pixels → vitesse boule
+const POWER_SCALE = 1 / 7;
 const MAX_POWER = 22;
-const TOTAL_BALLS = 8;
 const TICK_MS = 16;
 const CUE_START: V2 = { x: 175, y: H / 2 };
+const FLIP_DURATION_MS = 2400;
+const FLIP_RESULT_DELAY_MS = 1600;
+
+type Group = 'solid' | 'stripe';
+type Phase = 'coinflip' | 'flipresult' | 'aim' | 'shooting' | 'done';
+type Owner = Group | 'eight';
 
 interface V2 { x: number; y: number }
 interface Ball {
-  id: number; // 0 = cue, 1-8 = colored
+  id: number; // 0 = cue, 1-7 solid, 8 = noire, 9-15 stripe
   pos: V2;
   vel: V2;
-  color: string;
-  ringColor: string;
+  color: string;        // couleur dominante (jaune, bleu…)
   alive: boolean;
+  owner: Owner | 'cue'; // pour grouper rapidement
 }
 
-// Couleurs façon pool : solid 1-8 (jaune, bleu, rouge, violet, orange, vert, bordeaux, noir)
+// Palette pool standard
+//   1 = jaune, 2 = bleu, 3 = rouge, 4 = violet, 5 = orange, 6 = vert, 7 = bordeaux
+//   8 = noire, 9-15 = stripe des mêmes couleurs
 const BALL_COLORS = [
-  '#FFFFFF',                          // 0 cue
-  '#FFD400', '#0050C8', '#D32030',    // 1 2 3
-  '#7B2B8E', '#FF7A1F', '#0F8A3E',    // 4 5 6
-  '#7A1B1B', '#0E0E12',               // 7 8
+  '#FFFFFF',                                                                                  // 0 cue
+  '#FFD400', '#0050C8', '#D32030', '#7B2B8E', '#FF7A1F', '#0F8A3E', '#7A1B1B',                // 1-7 solid
+  '#0E0E12',                                                                                  // 8
+  '#FFD400', '#0050C8', '#D32030', '#7B2B8E', '#FF7A1F', '#0F8A3E', '#7A1B1B',                // 9-15 stripe
 ];
-const BALL_RING_COLORS = [
-  '#cdcdcd',
-  '#a88800', '#003088', '#871424', '#4d1959', '#a04612', '#0a5b29', '#491010', '#000',
-];
+
+function ownerOf(id: number): Owner | 'cue' {
+  if (id === 0) return 'cue';
+  if (id === 8) return 'eight';
+  if (id <= 7) return 'solid';
+  return 'stripe';
+}
 
 function initBalls(): Ball[] {
   const cue: Ball = {
     id: 0, pos: { ...CUE_START }, vel: { x: 0, y: 0 },
-    color: BALL_COLORS[0], ringColor: BALL_RING_COLORS[0], alive: true,
+    color: BALL_COLORS[0], alive: true, owner: 'cue',
   };
-  // Triangle compact à droite : rangs de 1, 2, 3, 2 = 8 boules
-  const startX = 470;
+  // Triangle 8-ball standard : 5 rangées (1, 2, 3, 4, 5)
+  // Position de la noire : rangée 2, centre (index 4 dans l'ordre apex-vers-arrière)
+  const rowCounts = [1, 2, 3, 4, 5];
+  const startX = 460;
   const startY = H / 2;
-  const rowSpacing = BALL_R * 1.85;
-  const colSpacing = BALL_R * 2.05;
+  const rowSpacing = BALL_R * 1.87;
+  const ballSpacing = BALL_R * 2.05;
+
+  // Layout des IDs : on alterne solid/stripe avec la noire pile au milieu
+  //   Row 0 (1) : 1
+  //   Row 1 (2) : 9, 2
+  //   Row 2 (3) : 10, 8, 3       ← noire au centre
+  //   Row 3 (4) : 11, 4, 12, 5
+  //   Row 4 (5) : 6, 13, 7, 14, 15
+  const ids = [
+    1,
+    9, 2,
+    10, 8, 3,
+    11, 4, 12, 5,
+    6, 13, 7, 14, 15,
+  ];
+
   const balls: Ball[] = [cue];
-  let id = 1;
-  const layout: Array<{ row: number; col: number }> = [];
-  // Row 0: 1 ball
-  // Row 1: 2 balls
-  // Row 2: 3 balls
-  // Row 3: 2 balls
-  for (let i = 0; i < 1; i++) layout.push({ row: 0, col: 0 });
-  for (let i = 0; i < 2; i++) layout.push({ row: 1, col: i });
-  for (let i = 0; i < 3; i++) layout.push({ row: 2, col: i });
-  for (let i = 0; i < 2; i++) layout.push({ row: 3, col: i });
-  // On positionne en triangle : la rangée row a (row+1 ou row-1) cases centrées
-  const rowCounts = [1, 2, 3, 2];
-  layout.forEach((slot) => {
-    const count = rowCounts[slot.row];
-    const x = startX + slot.row * rowSpacing;
-    const y = startY + (slot.col - (count - 1) / 2) * colSpacing;
-    balls.push({
-      id, pos: { x, y }, vel: { x: 0, y: 0 },
-      color: BALL_COLORS[id], ringColor: BALL_RING_COLORS[id], alive: true,
-    });
-    id++;
-  });
+  let idx = 0;
+  for (let row = 0; row < 5; row++) {
+    const count = rowCounts[row];
+    const x = startX + row * rowSpacing;
+    for (let i = 0; i < count; i++) {
+      const y = startY + (i - (count - 1) / 2) * ballSpacing;
+      const id = ids[idx++];
+      balls.push({
+        id, pos: { x, y }, vel: { x: 0, y: 0 },
+        color: BALL_COLORS[id], alive: true, owner: ownerOf(id),
+      });
+    }
+  }
   return balls;
 }
 
@@ -92,20 +117,60 @@ export const BilliardsGame: GameModule = {
   id: 'billiards',
   apiId: 'billiards',
   name: 'Billard',
-  description: '1v1 pool. Drag pour viser, release pour tirer. Pochete plus que ton adversaire.',
+  description: '8-ball pool. Pile ou face puis vraies règles : groupe par 1er pot, finir par la noire.',
   Component: BilliardsComponent,
 };
 
 function BilliardsComponent({ onFinish }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const stateRef = useRef<{ balls: Ball[]; aim: V2 | null }>({ balls: initBalls(), aim: null });
-  const [phase, setPhase] = useState<'aim' | 'shooting' | 'done'>('aim');
+  const [phase, setPhase] = useState<Phase>('coinflip');
   const [currentPlayer, setCurrentPlayer] = useState<1 | 2>(1);
   const [scores, setScores] = useState({ p1: 0, p2: 0 });
-  // Compte les boules alive avant chaque coup pour savoir combien ont été potées
+  const [groups, setGroups] = useState<{ p1?: Group; p2?: Group }>({});
   const aliveBeforeShotRef = useRef(0);
+  // Tracking de l'animation pile ou face
+  const flipStartRef = useRef<number>(0);
+  const flipResultRef = useRef<1 | 2 | null>(null);
+  // Raison de fin de partie pour le message
+  const [endReason, setEndReason] = useState<'eight_correct' | 'eight_wrong' | 'normal'>('normal');
+  const [endWinner, setEndWinner] = useState<1 | 2 | null>(null);
 
-  // Coord canvas → SVG/viewport
+  // ─ Pile ou face initial ─────────────────────────────────────────────────
+  // Lance un rAF pour animer le flip, puis transitionne phase=flipresult
+  // (affichage du gagnant), puis phase=aim (départ de la partie).
+  useEffect(() => {
+    if (phase !== 'coinflip') return;
+    flipStartRef.current = performance.now();
+    const winner: 1 | 2 = Math.random() < 0.5 ? 1 : 2;
+    flipResultRef.current = winner;
+    let raf = 0;
+    const tick = () => {
+      const elapsed = performance.now() - flipStartRef.current;
+      drawCoinFlip(canvasRef, elapsed, winner);
+      if (elapsed < FLIP_DURATION_MS) {
+        raf = requestAnimationFrame(tick);
+      } else {
+        setCurrentPlayer(winner);
+        setPhase('flipresult');
+      }
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [phase]);
+
+  // Affiche le résultat du flip pendant ~1.6s puis bascule en aim
+  useEffect(() => {
+    if (phase !== 'flipresult') return;
+    drawFlipResult(canvasRef, flipResultRef.current ?? 1);
+    const t = window.setTimeout(() => {
+      setPhase('aim');
+      redraw();
+    }, FLIP_RESULT_DELAY_MS);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
+
   function pointFromEvent(e: React.PointerEvent<HTMLCanvasElement>): V2 {
     const c = canvasRef.current;
     if (!c) return { x: 0, y: 0 };
@@ -137,7 +202,6 @@ function BilliardsComponent({ onFinish }: GameProps) {
     const dist = Math.hypot(dx, dy);
     stateRef.current.aim = null;
     if (dist < 12) {
-      // Trop court → on annule, pas de tir
       redraw();
       return;
     }
@@ -154,10 +218,10 @@ function BilliardsComponent({ onFinish }: GameProps) {
     if (!c) return;
     const ctx = c.getContext('2d');
     if (!ctx) return;
-    draw(ctx, stateRef.current.balls, stateRef.current.aim, phase, currentPlayer);
+    drawTable(ctx, stateRef.current.balls, stateRef.current.aim, phase, currentPlayer, groups);
   }
 
-  // Boucle physique
+  // ─ Physique ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (phase !== 'shooting') return;
     const interval = window.setInterval(() => {
@@ -165,72 +229,177 @@ function BilliardsComponent({ onFinish }: GameProps) {
       stepBalls(s.balls);
       redraw();
 
-      // Toutes les boules sont arrêtées ?
       const stopped = s.balls.every((b) => !b.alive || (Math.abs(b.vel.x) < 0.001 && Math.abs(b.vel.y) < 0.001));
       if (!stopped) return;
       clearInterval(interval);
 
-      // Compte les boules potées sur ce coup
-      const aliveAfter = s.balls.filter((b) => b.id !== 0 && b.alive).length;
-      const potted = aliveBeforeShotRef.current - aliveAfter;
-      const myKey = currentPlayer === 1 ? 'p1' : 'p2';
+      // Inventaire des boules potées sur ce coup
+      const pottedThisShot: Ball[] = [];
+      // On refait un balayage : tout ce qui a alive=false sans avoir été déjà
+      // marqué dans un tour précédent (en pratique : tout ce qui était alive
+      // au début du shot et qui ne l'est plus).
+      // Plus simple : on snapshot avant et on diff. Mais on a juste alive un bit,
+      // donc on regarde tout ce qui n'est plus alive et qui ne l'était pas avant
+      // serait complexe. À la place, on track "deaths during shot" autrement :
+      // pas le temps, on regarde "alive après" et on compare au count avant.
+      // Pour identifier QUELLES boules, on stocke leur owner avec un tag.
+      // Simplification : on parcourt tout, on identifie celles qui sont mortes
+      // (alive=false) et on classe par owner. Comme les boules mortes restent
+      // mortes, on ne re-traite pas celles d'avant — on ne saurait pas.
+      // SOLUTION : on stocke un Set des ids morts au START du shot.
+      // → cf. plus haut on a aliveBeforeShotRef = count uniquement. Il faut
+      //   aussi un Set ids vivants avant. Trop tard pour ça : on fait un hack
+      //   en passant pottedJustNow via stateRef.
+      // Pour bien faire, refactor : on stocke aliveIdsBeforeShot dans une ref.
+      const allDeadIds = s.balls.filter((b) => !b.alive).map((b) => b.id);
+      const beforeAliveIds = aliveIdsBeforeShotRef.current;
+      for (const id of allDeadIds) {
+        if (beforeAliveIds.has(id)) {
+          const ball = s.balls.find((b) => b.id === id);
+          if (ball) pottedThisShot.push(ball);
+        }
+      }
 
-      // Cue ball potée ? Respawn (pas de pénalité de score).
+      const myKey = currentPlayer === 1 ? 'p1' : 'p2';
+      const myGroup = groups[myKey];
+      const otherKey = currentPlayer === 1 ? 'p2' : 'p1';
+
+      // Cue ball pochée ?
+      const cuePotted = pottedThisShot.some((b) => b.id === 0);
+      const eightPotted = pottedThisShot.some((b) => b.id === 8);
+      const coloredPotted = pottedThisShot.filter((b) => b.id !== 0 && b.id !== 8);
+
+      // Respawn cue si nécessaire
       const cue = s.balls[0];
-      if (!cue.alive) {
+      if (cuePotted) {
         cue.alive = true;
         cue.pos = { ...CUE_START };
         cue.vel = { x: 0, y: 0 };
       }
 
-      // Met à jour les scores
-      let nextScores = scores;
-      if (potted > 0) {
-        nextScores = { ...scores, [myKey]: scores[myKey] + potted };
-        setScores(nextScores);
-      }
-
-      // Fin de partie : toutes les colorées potées
-      if (aliveAfter === 0) {
+      // CAS NOIRE POTÉE → fin de partie immédiate
+      if (eightPotted) {
+        const myColoredLeft = s.balls.filter((b) => b.alive && b.owner === myGroup).length;
+        const clearedMyGroup = myGroup !== undefined && myColoredLeft === 0;
+        const winner: 1 | 2 = clearedMyGroup && !cuePotted ? currentPlayer : (currentPlayer === 1 ? 2 : 1);
+        setEndWinner(winner);
+        setEndReason(clearedMyGroup && !cuePotted ? 'eight_correct' : 'eight_wrong');
         setPhase('done');
-        setTimeout(() => onFinish(nextScores.p1, nextScores.p2), 800);
+        // Score envoyé : winner reçoit bonus 100 + ses pots, loser garde ses pots
+        const myPots = scores[myKey];
+        const otherPots = scores[otherKey];
+        const winnerKey = winner === 1 ? 'p1' : 'p2';
+        const winnerPots = winnerKey === myKey ? myPots : otherPots;
+        const loserPots = winnerKey === myKey ? otherPots : myPots;
+        const sc1 = winner === 1 ? 100 + winnerPots : loserPots;
+        const sc2 = winner === 2 ? 100 + winnerPots : loserPots;
+        setTimeout(() => onFinish(sc1, sc2), 1500);
         return;
       }
 
-      // Changement de tour si rien poté, sinon rejoue
-      if (potted === 0) {
+      // Attribution des groupes si pas encore fait + coloured potted
+      let updatedGroups = groups;
+      let scoreDelta = { p1: 0, p2: 0 };
+      if (!groups.p1 && !groups.p2 && coloredPotted.length > 0) {
+        // Prend l'owner de la première colorée potée
+        const firstOwner = coloredPotted[0].owner as Group;
+        const otherOwner: Group = firstOwner === 'solid' ? 'stripe' : 'solid';
+        updatedGroups = currentPlayer === 1
+          ? { p1: firstOwner, p2: otherOwner }
+          : { p1: otherOwner, p2: firstOwner };
+        setGroups(updatedGroups);
+      }
+
+      // Calcul des scores : chaque colorée potée donne 1 point à son owner
+      // (pas au joueur qui a tiré — si tu pottes la boule de l'autre, c'est
+      // lui qui marque, règle classique).
+      const myGroupFinal = currentPlayer === 1 ? updatedGroups.p1 : updatedGroups.p2;
+      const otherGroupFinal = currentPlayer === 1 ? updatedGroups.p2 : updatedGroups.p1;
+      for (const b of coloredPotted) {
+        if (b.owner === myGroupFinal) scoreDelta[myKey] += 1;
+        else if (b.owner === otherGroupFinal) scoreDelta[otherKey] += 1;
+      }
+
+      let nextScores = scores;
+      if (scoreDelta.p1 !== 0 || scoreDelta.p2 !== 0) {
+        nextScores = { p1: scores.p1 + scoreDelta.p1, p2: scores.p2 + scoreDelta.p2 };
+        setScores(nextScores);
+      }
+
+      // Tour suivant ?
+      // - Cue pochée → on perd le tour, faute simple
+      // - Si on a poté au moins UNE boule de notre groupe (et pas cue) → rejouons
+      // - Sinon → l'autre joueur joue
+      const myOwnPotted = coloredPotted.some((b) => b.owner === myGroupFinal);
+      if (cuePotted || !myOwnPotted) {
         setCurrentPlayer((p) => (p === 1 ? 2 : 1));
       }
+
       setPhase('aim');
       redraw();
     }, TICK_MS);
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [phase, currentPlayer, scores]);
+  }, [phase, currentPlayer, scores, groups]);
 
-  // Premier rendu
-  useEffect(() => { redraw(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // Stocke l'état "ids alive avant le shot" pour pouvoir identifier
+  // les boules potées au moment du resolve
+  const aliveIdsBeforeShotRef = useRef<Set<number>>(new Set());
+  useEffect(() => {
+    if (phase !== 'shooting') return;
+    aliveIdsBeforeShotRef.current = new Set(
+      stateRef.current.balls.filter((b) => b.alive).map((b) => b.id),
+    );
+  }, [phase]);
+
+  // Premier rendu une fois sorti du coinflip
+  useEffect(() => {
+    if (phase === 'aim') redraw();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase]);
 
   const turnColor = currentPlayer === 1 ? '#FF6B57' : '#5B8CFF';
   const turnLabel = currentPlayer === 1 ? '🔴 Joueur 1' : '🔵 Joueur 2';
+  const myGroup = currentPlayer === 1 ? groups.p1 : groups.p2;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
-      {/* Score */}
       <div style={{ display: 'flex', gap: 60, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 30 }}>
-        <span style={{ color: '#FF6B57' }}>🔴 {scores.p1}</span>
-        <span style={{ color: '#5B8CFF' }}>🔵 {scores.p2}</span>
+        <span style={{ color: '#FF6B57' }}>
+          🔴 {scores.p1}
+          {groups.p1 && <span style={{ fontSize: 14, marginLeft: 6, opacity: 0.85 }}>{groups.p1 === 'solid' ? '● PLEINES' : '◐ RAYÉES'}</span>}
+        </span>
+        <span style={{ color: '#5B8CFF' }}>
+          🔵 {scores.p2}
+          {groups.p2 && <span style={{ fontSize: 14, marginLeft: 6, opacity: 0.85 }}>{groups.p2 === 'solid' ? '● PLEINES' : '◐ RAYÉES'}</span>}
+        </span>
       </div>
-      {phase !== 'done' && (
-        <div style={{ color: turnColor, fontWeight: 700, fontSize: 14 }}>
-          Au tour de {turnLabel} {phase === 'shooting' && '· en attente…'}
+
+      {phase === 'coinflip' && (
+        <div style={{ color: 'var(--muted)', fontSize: 14 }}>Pile ou face… qui commence ?</div>
+      )}
+      {phase === 'flipresult' && (
+        <div style={{ color: turnColor, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22 }}>
+          {turnLabel} commence !
+        </div>
+      )}
+      {(phase === 'aim' || phase === 'shooting') && (
+        <div style={{ color: turnColor, fontWeight: 700, fontSize: 14, textAlign: 'center' }}>
+          Au tour de {turnLabel}
+          {myGroup && <span style={{ marginLeft: 8, opacity: 0.85 }}>· vise les {myGroup === 'solid' ? 'pleines' : 'rayées'}</span>}
+          {!myGroup && (groups.p1 || groups.p2) === undefined && <span style={{ marginLeft: 8, opacity: 0.7 }}>· open game (1er pot = ton groupe)</span>}
+          {phase === 'shooting' && ' · en attente…'}
         </div>
       )}
       {phase === 'done' && (
-        <div style={{ color: 'var(--win)', fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22 }}>
-          Terminé ! Score envoyé…
+        <div style={{ color: endReason === 'eight_correct' ? 'var(--win)' : 'var(--loss)',
+                     fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22, textAlign: 'center' }}>
+          {endReason === 'eight_correct' && `🎱 Joueur ${endWinner} gagne en empochant la noire ! 👑`}
+          {endReason === 'eight_wrong' && `💀 Noire trop tôt — Joueur ${endWinner} gagne par défaut`}
+          {endReason === 'normal' && 'Terminé !'}
         </div>
       )}
+
       <canvas
         ref={canvasRef}
         width={W}
@@ -247,16 +416,17 @@ function BilliardsComponent({ onFinish }: GameProps) {
           userSelect: 'none',
         }}
       />
-      <div style={{ color: 'var(--muted)', fontSize: 12.5, textAlign: 'center', maxWidth: 480, lineHeight: 1.5 }}>
-        <strong>Drag depuis n'importe où</strong> vers la direction que tu veux donner à la blanche.
-        Plus tu tires loin, plus le tir est fort.<br />
-        Pochete une boule = tu rejoues. Ratée = au tour de l'autre. Blanche dans le trou = respawn.
+      <div style={{ color: 'var(--muted)', fontSize: 12.5, textAlign: 'center', maxWidth: 520, lineHeight: 1.5 }}>
+        <strong>Drag pour viser, lâche pour tirer.</strong> Pochete une boule de TON groupe = tu rejoues.
+        L'opponent gagne le point sur tes erreurs.<br />
+        Finis par la <strong style={{ color: '#000' }}>noire</strong> APRÈS avoir clear tout ton groupe.
+        Noire trop tôt = défaite immédiate.
       </div>
     </div>
   );
 }
 
-// ── Physique ──────────────────────────────────────────────────────────────
+// ─ Physique balls ────────────────────────────────────────────────────────
 function stepBalls(balls: Ball[]) {
   for (const b of balls) {
     if (!b.alive) continue;
@@ -266,13 +436,11 @@ function stepBalls(balls: Ball[]) {
     b.vel.y *= FRICTION;
     if (Math.abs(b.vel.x) < MIN_SPEED) b.vel.x = 0;
     if (Math.abs(b.vel.y) < MIN_SPEED) b.vel.y = 0;
-    // Cushions (avec un léger amortissement)
     if (b.pos.x - BALL_R <= CUSHION && b.vel.x < 0)  { b.pos.x = CUSHION + BALL_R;     b.vel.x *= -0.82; }
     if (b.pos.x + BALL_R >= W - CUSHION && b.vel.x > 0) { b.pos.x = W - CUSHION - BALL_R; b.vel.x *= -0.82; }
     if (b.pos.y - BALL_R <= CUSHION && b.vel.y < 0)  { b.pos.y = CUSHION + BALL_R;     b.vel.y *= -0.82; }
     if (b.pos.y + BALL_R >= H - CUSHION && b.vel.y > 0) { b.pos.y = H - CUSHION - BALL_R; b.vel.y *= -0.82; }
   }
-  // Pochettes
   for (const b of balls) {
     if (!b.alive) continue;
     for (const p of POCKETS) {
@@ -283,7 +451,6 @@ function stepBalls(balls: Ball[]) {
       }
     }
   }
-  // Collisions inter-boules : élastique, masses égales
   for (let i = 0; i < balls.length; i++) {
     const a = balls[i];
     if (!a.alive) continue;
@@ -295,15 +462,12 @@ function stepBalls(balls: Ball[]) {
       const dist = Math.hypot(dx, dy);
       const minDist = BALL_R * 2;
       if (dist > 0 && dist < minDist) {
-        // Sépare les deux boules pour éviter le sticking
         const overlap = (minDist - dist) / 2;
         const nx = dx / dist, ny = dy / dist;
         a.pos.x -= nx * overlap;
         a.pos.y -= ny * overlap;
         b.pos.x += nx * overlap;
         b.pos.y += ny * overlap;
-        // Échange élastique : composante perpendiculaire à la normale conservée,
-        // composante parallèle échangée.
         const dvx = b.vel.x - a.vel.x;
         const dvy = b.vel.y - a.vel.y;
         const dot = dvx * nx + dvy * ny;
@@ -318,32 +482,135 @@ function stepBalls(balls: Ball[]) {
   }
 }
 
-// ── Dessin ────────────────────────────────────────────────────────────────
-function draw(
-  ctx: CanvasRenderingContext2D, balls: Ball[], aim: V2 | null,
-  phase: 'aim' | 'shooting' | 'done', currentPlayer: 1 | 2,
-) {
-  // Table verte avec dégradé subtil
-  const grad = ctx.createRadialGradient(W / 2, H / 2, 50, W / 2, H / 2, Math.max(W, H));
-  grad.addColorStop(0, '#0E693A');
-  grad.addColorStop(1, '#08471F');
-  ctx.fillStyle = grad;
+// ─ Dessin pile ou face animé ─────────────────────────────────────────────
+function drawCoinFlip(canvasRef: React.RefObject<HTMLCanvasElement>, elapsed: number, winner: 1 | 2) {
+  const c = canvasRef.current; if (!c) return;
+  const ctx = c.getContext('2d'); if (!ctx) return;
+  // Fond table verte (cohérence visuelle)
+  ctx.fillStyle = '#0E693A';
   ctx.fillRect(0, 0, W, H);
-
-  // Cushions (bandes brunes)
   ctx.fillStyle = '#5B3A1F';
   ctx.fillRect(0, 0, W, CUSHION);
   ctx.fillRect(0, H - CUSHION, W, CUSHION);
   ctx.fillRect(0, 0, CUSHION, H);
   ctx.fillRect(W - CUSHION, 0, CUSHION, H);
 
-  // Pockets
+  // Pièce qui flip : scaleY oscille selon le cosinus, fréquence = 8 flips total
+  const flipsTotal = 8;
+  const t = Math.min(1, elapsed / FLIP_DURATION_MS);
+  const easedT = 1 - Math.pow(1 - t, 2.2); // ease-out : on ralentit en fin de flip
+  const scaleY = Math.abs(Math.cos(easedT * Math.PI * flipsTotal));
+  // Détermine quelle face est visible
+  const flipIndex = Math.floor(easedT * flipsTotal * 2);
+  // En fin de flip, on force la face du winner
+  const showWinnerFace = t > 0.93;
+  // Convention : pile = winner 1, face = winner 2 (arbitraire)
+  const showingPile = showWinnerFace
+    ? winner === 1
+    : flipIndex % 2 === 0;
+
+  const cx = W / 2, cy = H / 2;
+  const coinR = 56;
+  // Ombre au sol
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  const shadowScale = 0.6 + 0.4 * (1 - scaleY);
+  ctx.beginPath();
+  ctx.ellipse(cx, cy + coinR + 20, coinR * shadowScale, 8, 0, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Soulèvement vertical : la pièce monte au début, redescend à la fin
+  const bounceY = -Math.sin(easedT * Math.PI) * 30;
+
+  ctx.save();
+  ctx.translate(cx, cy + bounceY);
+  ctx.scale(1, Math.max(0.08, scaleY));
+  // Pièce
+  const grad = ctx.createRadialGradient(-coinR * 0.3, -coinR * 0.4, 5, 0, 0, coinR);
+  grad.addColorStop(0, showingPile ? '#FFEB7A' : '#E8C063');
+  grad.addColorStop(1, showingPile ? '#C49B22' : '#9A7A1A');
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.arc(0, 0, coinR, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#7A5E16'; ctx.lineWidth = 3;
+  ctx.stroke();
+  // Liseré intérieur
+  ctx.strokeStyle = 'rgba(255,255,255,0.25)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath(); ctx.arc(0, 0, coinR - 6, 0, Math.PI * 2); ctx.stroke();
+  // Texte de la face
+  ctx.fillStyle = '#3D2D08';
+  ctx.font = 'bold 28px var(--font-display, sans-serif)';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(showingPile ? 'PILE' : 'FACE', 0, 0);
+  ctx.restore();
+
+  // Bandeau supérieur
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(0, CUSHION, W, 36);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 18px var(--font-display, sans-serif)';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText('Pile ou face…', W / 2, CUSHION + 18);
+}
+
+function drawFlipResult(canvasRef: React.RefObject<HTMLCanvasElement>, winner: 1 | 2) {
+  const c = canvasRef.current; if (!c) return;
+  const ctx = c.getContext('2d'); if (!ctx) return;
+  ctx.fillStyle = '#0E693A';
+  ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#5B3A1F';
+  ctx.fillRect(0, 0, W, CUSHION);
+  ctx.fillRect(0, H - CUSHION, W, CUSHION);
+  ctx.fillRect(0, 0, CUSHION, H);
+  ctx.fillRect(W - CUSHION, 0, CUSHION, H);
+
+  // Pièce immobile (face du winner)
+  const showingPile = winner === 1;
+  const cx = W / 2, cy = H / 2;
+  const coinR = 56;
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath(); ctx.ellipse(cx, cy + coinR + 20, coinR, 8, 0, 0, Math.PI * 2); ctx.fill();
+  const grad = ctx.createRadialGradient(cx - coinR * 0.3, cy - coinR * 0.4, 5, cx, cy, coinR);
+  grad.addColorStop(0, showingPile ? '#FFEB7A' : '#E8C063');
+  grad.addColorStop(1, showingPile ? '#C49B22' : '#9A7A1A');
+  ctx.fillStyle = grad;
+  ctx.beginPath(); ctx.arc(cx, cy, coinR, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#7A5E16'; ctx.lineWidth = 3; ctx.stroke();
+  ctx.fillStyle = '#3D2D08';
+  ctx.font = 'bold 28px var(--font-display, sans-serif)';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(showingPile ? 'PILE' : 'FACE', cx, cy);
+
+  // Annonce du vainqueur
+  const wColor = winner === 1 ? '#FF6B57' : '#5B8CFF';
+  ctx.fillStyle = 'rgba(0,0,0,0.55)';
+  ctx.fillRect(0, H / 2 - coinR - 70, W, 40);
+  ctx.fillStyle = wColor;
+  ctx.font = 'bold 22px var(--font-display, sans-serif)';
+  ctx.fillText(`${winner === 1 ? '🔴' : '🔵'} Joueur ${winner} commence !`, W / 2, H / 2 - coinR - 50);
+}
+
+// ─ Dessin table + boules ────────────────────────────────────────────────
+function drawTable(
+  ctx: CanvasRenderingContext2D, balls: Ball[], aim: V2 | null,
+  phase: Phase, currentPlayer: 1 | 2, groups: { p1?: Group; p2?: Group },
+) {
+  const grad = ctx.createRadialGradient(W / 2, H / 2, 50, W / 2, H / 2, Math.max(W, H));
+  grad.addColorStop(0, '#0E693A');
+  grad.addColorStop(1, '#08471F');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, W, H);
+
+  ctx.fillStyle = '#5B3A1F';
+  ctx.fillRect(0, 0, W, CUSHION);
+  ctx.fillRect(0, H - CUSHION, W, CUSHION);
+  ctx.fillRect(0, 0, CUSHION, H);
+  ctx.fillRect(W - CUSHION, 0, CUSHION, H);
+
   for (const p of POCKETS) {
     ctx.fillStyle = '#000';
     ctx.beginPath(); ctx.arc(p.x, p.y, POCKET_R, 0, Math.PI * 2); ctx.fill();
   }
 
-  // D-zone d'origine de la blanche (petite ligne)
   ctx.strokeStyle = 'rgba(255,255,255,0.15)';
   ctx.lineWidth = 1.5;
   ctx.setLineDash([6, 6]);
@@ -353,87 +620,104 @@ function draw(
   ctx.stroke();
   ctx.setLineDash([]);
 
-  // Boules
   for (const b of balls) {
     if (!b.alive) continue;
-    // Ombre
-    ctx.fillStyle = 'rgba(0,0,0,0.35)';
-    ctx.beginPath(); ctx.arc(b.pos.x + 2, b.pos.y + 3, BALL_R, 0, Math.PI * 2); ctx.fill();
-    // Boule
-    ctx.fillStyle = b.color;
-    ctx.beginPath(); ctx.arc(b.pos.x, b.pos.y, BALL_R, 0, Math.PI * 2); ctx.fill();
-    // Highlight (effet 3D minimal)
-    const hg = ctx.createRadialGradient(b.pos.x - 4, b.pos.y - 5, 1, b.pos.x, b.pos.y, BALL_R);
-    hg.addColorStop(0, 'rgba(255,255,255,0.55)');
-    hg.addColorStop(0.5, 'rgba(255,255,255,0)');
-    hg.addColorStop(1, 'rgba(0,0,0,0.25)');
-    ctx.fillStyle = hg;
-    ctx.beginPath(); ctx.arc(b.pos.x, b.pos.y, BALL_R, 0, Math.PI * 2); ctx.fill();
-    // Numéro pour les colorées (sauf la noire qui est numérotée 8 en blanc)
-    if (b.id > 0) {
-      ctx.fillStyle = '#fff';
-      ctx.beginPath(); ctx.arc(b.pos.x, b.pos.y, BALL_R * 0.42, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#000';
-      ctx.font = `bold ${Math.round(BALL_R * 0.85)}px sans-serif`;
-      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-      ctx.fillText(String(b.id), b.pos.x, b.pos.y + 1);
-    }
+    drawBall(ctx, b);
   }
 
-  // Aim line + power indicator
   if (phase === 'aim' && aim) {
     const cue = balls[0];
     if (!cue.alive) return;
-    const dx = aim.x - cue.pos.x;
-    const dy = aim.y - cue.pos.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist > 6) {
-      const ux = dx / dist, uy = dy / dist;
-      // Ligne de visée pointillée (s'étire vers l'avant pour montrer la trajectoire)
-      ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-      ctx.lineWidth = 2;
-      ctx.setLineDash([6, 4]);
-      ctx.beginPath();
-      ctx.moveTo(cue.pos.x + ux * BALL_R, cue.pos.y + uy * BALL_R);
-      ctx.lineTo(cue.pos.x + ux * 220, cue.pos.y + uy * 220);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      // Cue stick : ligne épaisse derrière la blanche, proportionnelle à la puissance
-      const power = Math.min(MAX_POWER, dist * POWER_SCALE);
-      const powerT = power / MAX_POWER;
-      const stickLen = 100 + powerT * 80;
-      ctx.strokeStyle = `rgb(${165 + powerT * 90}, ${110 - powerT * 90}, ${30})`;
-      ctx.lineWidth = 5;
-      ctx.beginPath();
-      ctx.moveTo(cue.pos.x - ux * (BALL_R + 4), cue.pos.y - uy * (BALL_R + 4));
-      ctx.lineTo(cue.pos.x - ux * (BALL_R + 4 + stickLen), cue.pos.y - uy * (BALL_R + 4 + stickLen));
-      ctx.stroke();
-      // Embout de la queue (noir)
-      ctx.strokeStyle = '#222';
-      ctx.lineWidth = 5;
-      ctx.beginPath();
-      ctx.moveTo(cue.pos.x - ux * (BALL_R + 4 + stickLen), cue.pos.y - uy * (BALL_R + 4 + stickLen));
-      ctx.lineTo(cue.pos.x - ux * (BALL_R + 4 + stickLen + 16), cue.pos.y - uy * (BALL_R + 4 + stickLen + 16));
-      ctx.stroke();
-
-      // Barre de puissance en bas
-      const barW = 180, barH = 8;
-      const barX = (W - barW) / 2, barY = H - CUSHION - 14;
-      ctx.fillStyle = 'rgba(0,0,0,0.45)';
-      ctx.fillRect(barX, barY, barW, barH);
-      const powerColor = powerT < 0.5
-        ? `rgb(${Math.round(60 + powerT * 300)}, ${Math.round(200 + powerT * 100)}, 60)`
-        : `rgb(${Math.round(210 + powerT * 45)}, ${Math.round(250 - powerT * 200)}, 30)`;
-      ctx.fillStyle = powerColor;
-      ctx.fillRect(barX, barY, barW * powerT, barH);
-      ctx.strokeStyle = 'rgba(255,255,255,0.4)';
-      ctx.lineWidth = 1;
-      ctx.strokeRect(barX, barY, barW, barH);
-    }
+    drawAim(ctx, cue.pos, aim);
   }
 
-  // Indicateur joueur actif (petit cadre coloré en haut à gauche)
   ctx.fillStyle = currentPlayer === 1 ? 'rgba(255, 107, 87, 0.85)' : 'rgba(91, 140, 255, 0.85)';
   ctx.fillRect(CUSHION + 8, CUSHION + 8, 8, 8);
+}
+
+function drawBall(ctx: CanvasRenderingContext2D, b: Ball) {
+  // Ombre
+  ctx.fillStyle = 'rgba(0,0,0,0.35)';
+  ctx.beginPath(); ctx.arc(b.pos.x + 2, b.pos.y + 3, BALL_R, 0, Math.PI * 2); ctx.fill();
+
+  if (b.owner === 'stripe') {
+    // Boule rayée : fond blanc + bande colorée horizontale au milieu
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(b.pos.x, b.pos.y, BALL_R, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(b.pos.x - BALL_R, b.pos.y - BALL_R, BALL_R * 2, BALL_R * 2);
+    ctx.fillStyle = b.color;
+    ctx.fillRect(b.pos.x - BALL_R, b.pos.y - BALL_R * 0.55, BALL_R * 2, BALL_R * 1.1);
+    ctx.restore();
+  } else {
+    // Boule pleine (solid) ou noire ou cue
+    ctx.fillStyle = b.color;
+    ctx.beginPath(); ctx.arc(b.pos.x, b.pos.y, BALL_R, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // Highlight 3D
+  const hg = ctx.createRadialGradient(b.pos.x - 4, b.pos.y - 5, 1, b.pos.x, b.pos.y, BALL_R);
+  hg.addColorStop(0, 'rgba(255,255,255,0.55)');
+  hg.addColorStop(0.5, 'rgba(255,255,255,0)');
+  hg.addColorStop(1, 'rgba(0,0,0,0.25)');
+  ctx.fillStyle = hg;
+  ctx.beginPath(); ctx.arc(b.pos.x, b.pos.y, BALL_R, 0, Math.PI * 2); ctx.fill();
+
+  // Numéro pour toutes les colorées (sauf cue)
+  if (b.id > 0) {
+    ctx.fillStyle = '#fff';
+    ctx.beginPath(); ctx.arc(b.pos.x, b.pos.y, BALL_R * 0.42, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#000';
+    ctx.font = `bold ${Math.round(BALL_R * 0.85)}px sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(String(b.id), b.pos.x, b.pos.y + 1);
+  }
+}
+
+function drawAim(ctx: CanvasRenderingContext2D, cuePos: V2, aim: V2) {
+  const dx = aim.x - cuePos.x;
+  const dy = aim.y - cuePos.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= 6) return;
+  const ux = dx / dist, uy = dy / dist;
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = 2;
+  ctx.setLineDash([6, 4]);
+  ctx.beginPath();
+  ctx.moveTo(cuePos.x + ux * BALL_R, cuePos.y + uy * BALL_R);
+  ctx.lineTo(cuePos.x + ux * 220, cuePos.y + uy * 220);
+  ctx.stroke();
+  ctx.setLineDash([]);
+
+  const power = Math.min(MAX_POWER, dist * POWER_SCALE);
+  const powerT = power / MAX_POWER;
+  const stickLen = 100 + powerT * 80;
+  ctx.strokeStyle = `rgb(${165 + powerT * 90}, ${110 - powerT * 90}, ${30})`;
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(cuePos.x - ux * (BALL_R + 4), cuePos.y - uy * (BALL_R + 4));
+  ctx.lineTo(cuePos.x - ux * (BALL_R + 4 + stickLen), cuePos.y - uy * (BALL_R + 4 + stickLen));
+  ctx.stroke();
+  ctx.strokeStyle = '#222';
+  ctx.lineWidth = 5;
+  ctx.beginPath();
+  ctx.moveTo(cuePos.x - ux * (BALL_R + 4 + stickLen), cuePos.y - uy * (BALL_R + 4 + stickLen));
+  ctx.lineTo(cuePos.x - ux * (BALL_R + 4 + stickLen + 16), cuePos.y - uy * (BALL_R + 4 + stickLen + 16));
+  ctx.stroke();
+
+  const barW = 180, barH = 8;
+  const barX = (W - barW) / 2, barY = H - CUSHION - 14;
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(barX, barY, barW, barH);
+  const powerColor = powerT < 0.5
+    ? `rgb(${Math.round(60 + powerT * 300)}, ${Math.round(200 + powerT * 100)}, 60)`
+    : `rgb(${Math.round(210 + powerT * 45)}, ${Math.round(250 - powerT * 200)}, 30)`;
+  ctx.fillStyle = powerColor;
+  ctx.fillRect(barX, barY, barW * powerT, barH);
+  ctx.strokeStyle = 'rgba(255,255,255,0.4)';
+  ctx.lineWidth = 1;
+  ctx.strokeRect(barX, barY, barW, barH);
 }
