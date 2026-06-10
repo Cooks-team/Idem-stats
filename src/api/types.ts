@@ -117,6 +117,9 @@ export interface WallOfShameEntry {
 
 export interface WallOfShameResponse {
   latest: WallOfShameLatest | null;
+  // Tous les 5-0 datant de moins d'1h, ordre desc (le plus récent en tête).
+  // Utilisé par le ticker breaking-news global qui défile sur toutes les pages.
+  recent: WallOfShameLatest[];
   ranking: WallOfShameEntry[];
   totalEvents: number;
 }

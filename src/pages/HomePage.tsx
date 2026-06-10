@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { absoluteAvatar, api } from '../api/client';
 import type { FriendshipRow, LeaderboardEntry } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
@@ -14,7 +14,9 @@ type Tab = 'leaderboard' | 'shame';
 export function HomePage() {
   const { user } = useAuth();
   const nav = useNavigate();
-  const [tab, setTab] = useState<Tab>('leaderboard');
+  // Init du tab depuis ?tab=shame (cliquer le ticker breaking-news y atterrit directement)
+  const [params] = useSearchParams();
+  const [tab, setTab] = useState<Tab>(params.get('tab') === 'shame' ? 'shame' : 'leaderboard');
   const [filter, setFilter] = useState<string | null>(null); // null = Général
 
   const { data: entries = [], isLoading } = useQuery({
