@@ -65,7 +65,7 @@ export function InboxBell() {
         title="Boîte de réception"
         style={{ position: 'relative' }}
       >
-        <Icon name="pulse" size={20} />
+        <Icon name="envelope" size={20} />
         {total > 0 && (
           <span style={{
             position: 'absolute', top: 4, right: 4, minWidth: 16, height: 16,
