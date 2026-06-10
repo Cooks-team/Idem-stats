@@ -129,6 +129,11 @@ function BabyfootComponent({ onFinish, player1, player2, mode = 'local', matchId
       s.ball = newState.ball;
       s.trail = newState.trail;
       setScore(newState.score);
+      // Auto-démarrage : dès que le host envoie un state, le guest entre
+      // automatiquement en phase running (plus besoin de cliquer Démarrer
+      // côté invité — ça pouvait laisser le user bloqué sur l'écran "ready"
+      // sans comprendre qu'il fallait cliquer).
+      setPhase((p) => (p === 'setup' ? 'running' : p));
     },
   });
 
@@ -339,15 +344,22 @@ function BabyfootComponent({ onFinish, player1, player2, mode = 'local', matchId
           </div>
         </div>
       )}
-      {phase === 'setup' && (
+      {phase === 'setup' && mode !== 'guest' && (
         <>
           <button className="btn btn-accent btn-lg" onClick={start}>Démarrer</button>
           <div style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center', lineHeight: 1.6 }}>
             {ctrlHint}<br />
             Chacun a un gardien automatique. Premier à {WIN_GOALS} buts gagne.
-            {mode === 'guest' && <><br />⚡ Mode distance — le joueur 1 fait tourner la partie.</>}
+            {mode === 'host' && <><br />⚡ Mode distance — c'est toi qui lances la partie pour les deux.</>}
           </div>
         </>
+      )}
+      {phase === 'setup' && mode === 'guest' && (
+        <div style={{ color: 'var(--muted)', fontSize: 14, textAlign: 'center', lineHeight: 1.6, padding: '10px 0' }}>
+          ⚡ Tu es <strong style={{ color: '#5B8CFF' }}>🔵 J2</strong>. Tu joues avec <strong>{myScheme === 'arrows' ? 'les flèches' : 'ZQSD'}</strong>{' '}
+          + Shift pour booster.<br />
+          <span style={{ opacity: 0.85 }}>En attente que ton adversaire lance la partie…</span>
+        </div>
       )}
       {phase === 'running' && (
         <div style={{ color: 'var(--muted)', fontSize: 13 }}>

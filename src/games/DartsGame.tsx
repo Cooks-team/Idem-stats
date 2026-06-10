@@ -92,12 +92,11 @@ function DartsComponent({ onFinish }: GameProps) {
 
   function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
     if (!canThrow) return;
-    // On ne démarre un throw que si on touche la zone de la fléchette en bas.
-    // On donne une hitbox assez large pour faciliter le tap mobile (0.25 unités).
     const pt = svgPointFromClient(e.clientX, e.clientY);
-    const dx = pt.x - DART_REST_X;
-    const dy = pt.y - DART_REST_Y;
-    if (Math.hypot(dx, dy) > 0.35) return;
+    // Hitbox élargie : si on tape n'importe où DANS LA MOITIÉ BASSE (sous la
+    // cible), on attrape la fléchette. Beaucoup plus indulgent sur mobile que
+    // l'ancienne zone circulaire 0.35u — fini les "j'ai loupé mon tap".
+    if (pt.y < 0.95) return;
 
     e.currentTarget.setPointerCapture(e.pointerId);
     setDragging(true);
@@ -123,11 +122,10 @@ function DartsComponent({ onFinish }: GameProps) {
     try { e.currentTarget.releasePointerCapture(e.pointerId); } catch { /* déjà relâché */ }
 
     const releasePt = svgPointFromClient(e.clientX, e.clientY);
-    // Distance minimale pour valider le throw — sinon on rétracte juste la fléchette
-    const dx = releasePt.x - DART_REST_X;
-    const dy = releasePt.y - DART_REST_Y;
-    if (Math.hypot(dx, dy) < 0.2 || releasePt.y > 0.9) {
-      // Trop court ou pas assez vers le haut → on annule, dart retourne au repos
+    // Validation plus indulgente : il suffit d'avoir relâché AU-DESSUS de la
+    // zone de la fléchette (y < 0.95) pour valider — pas de seuil de distance
+    // strict, donc même un slide court mais en direction du board envoie.
+    if (releasePt.y > 0.95) {
       setDartPos({ x: DART_REST_X, y: DART_REST_Y });
       dragHistoryRef.current = [];
       return;
@@ -143,8 +141,10 @@ function DartsComponent({ onFinish }: GameProps) {
       if (dt > 0) speed = Math.hypot(b.pos.x - a.pos.x, b.pos.y - a.pos.y) / dt;
     }
     // À vitesse 3 unités/sec → spread négligeable.
-    // À vitesse 10+ unités/sec → spread ~0.05 (sensible mais pas catastrophique)
-    const spread = Math.min(0.06, Math.max(0, (speed - 2) * 0.008));
+    // À vitesse 10+ unités/sec → spread modéré (sensible mais pas punitif).
+    // Plus indulgent qu'avant (0.06 max → 0.045) pour que les tirs précis
+    // récompensent vraiment, sans handicaper les frappes rapides.
+    const spread = Math.min(0.045, Math.max(0, (speed - 2) * 0.006));
     const offX = (Math.random() - 0.5) * 2 * spread;
     const offY = (Math.random() - 0.5) * 2 * spread;
     const landingPt: V2 = { x: releasePt.x + offX, y: releasePt.y + offY };
@@ -155,10 +155,12 @@ function DartsComponent({ onFinish }: GameProps) {
 
   // Animation du vol : interpolation + parabole verticale + scale 3D (la dart
   // "s'éloigne" du viewer en plongeant vers la cible — feel Plato).
+  // Durée raccourcie (350 → 240ms) pour un feedback plus snappy, surtout
+  // utile en série quand on enchaîne 3 darts.
   useEffect(() => {
     if (!flying) return;
     let raf = 0;
-    const dur = 350;
+    const dur = 240;
     const tick = () => {
       const t = Math.min(1, (performance.now() - flying.startedAt) / dur);
       const x = flying.from.x + (flying.to.x - flying.from.x) * t;
@@ -475,12 +477,19 @@ function Dartboard({ svgRef, onPointerDown, onPointerMove, onPointerUp, hits, da
           />
         )}
 
-        {/* Zone de la fléchette au repos */}
+        {/* Zone de la fléchette au repos — bande horizontale en bas, plus
+            visible que l'ancien cercle, pour bien indiquer où poser le doigt */}
         {!dragging && !flying && (
-          <circle cx={DART_REST_X} cy={DART_REST_Y} r="0.32"
-            fill="rgba(214,255,61,0.06)" stroke="rgba(214,255,61,0.30)" strokeWidth={0.008}
-            strokeDasharray="0.04 0.03"
-            style={{ pointerEvents: 'none' }} />
+          <>
+            <rect x="-1.1" y="1.05" width="2.2" height="0.55" rx="0.08"
+              fill="rgba(214,255,61,0.06)" stroke="rgba(214,255,61,0.25)" strokeWidth={0.006}
+              strokeDasharray="0.04 0.03"
+              style={{ pointerEvents: 'none' }} />
+            <text x="0" y="1.55" textAnchor="middle" fontSize="0.07" fill="rgba(214,255,61,0.55)"
+              style={{ pointerEvents: 'none', fontFamily: 'var(--font-body, sans-serif)', fontWeight: 600 }}>
+              ↑ POSE TON DOIGT ET SLIDE
+            </text>
+          </>
         )}
 
         {/* La fléchette 3D : pointe métal, tige chrome, plumes vert-fluo + ombre */}

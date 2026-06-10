@@ -16,7 +16,7 @@ import { useRemoteGameSync } from '../realtime/useRemoteGameSync';
 const COLS = 28;
 const ROWS = 20;
 const CELL = 22;
-const TICK_MS = 110;
+const TICK_MS = 95;  // tick légèrement plus rapide qu'avant (110ms) → meilleur ressenti
 const START_LEN = 4;
 
 type Pt = { x: number; y: number };
@@ -136,10 +136,11 @@ function SnakeComponent({ onFinish, mode = 'local', matchId }: GameProps) {
       // Guest : remplace l'état local par celui reçu
       const s = stateRef.current;
       s.snakes = snapshot.snakes.map((sn) => ({ ...sn, body: sn.body.map((p) => ({ ...p })), nextDir: sn.dir, id: 0 as PlayerId } as Snake));
-      // Fix les ids car ils ne sont pas sérialisés
       s.snakes.forEach((sn, i) => { sn.id = i as PlayerId; });
       s.food = { ...snapshot.food };
       setTick(snapshot.tick);
+      // Auto-start guest dès qu'un state arrive (plus besoin de cliquer Démarrer)
+      setPhase((p) => (p === 'ready' ? 'running' : p));
     },
   });
 
@@ -174,6 +175,54 @@ function SnakeComponent({ onFinish, mode = 'local', matchId }: GameProps) {
       document.exitFullscreen().catch(() => {});
     }
   }, []);
+
+  // Saisie tactile (mobile) : swipe sur le canvas → direction.
+  // Le seuil de 22px évite que le moindre tap glissé soit pris pour un swipe.
+  // Indépendant du clavier : marche en parallèle. Applique au snake "à moi"
+  // selon le mode (J1 si local/host, envoyé au host si guest).
+  useEffect(() => {
+    if (phase !== 'running') return;
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    let startX = 0, startY = 0;
+    const onStart = (e: TouchEvent) => {
+      const t = e.touches[0]; if (!t) return;
+      startX = t.clientX; startY = t.clientY;
+    };
+    const onEnd = (e: TouchEvent) => {
+      const t = e.changedTouches[0]; if (!t) return;
+      const dx = t.clientX - startX;
+      const dy = t.clientY - startY;
+      const adx = Math.abs(dx), ady = Math.abs(dy);
+      if (Math.max(adx, ady) < 22) return; // tap trop court
+      let dirName: DirName;
+      if (adx > ady) dirName = dx > 0 ? 'right' : 'left';
+      else            dirName = dy > 0 ? 'down'  : 'up';
+      e.preventDefault();
+      const snakes = stateRef.current.snakes;
+      if (mode === 'local') {
+        // En local le swipe contrôle J1 (le serpent du joueur sur ce poste).
+        // Les autres joueurs continuent au clavier comme avant.
+        const snake = snakes[0];
+        if (!snake) return;
+        const dir = dirNameToVec(dirName);
+        if (!isOpposite(snake.dir, dir)) snake.nextDir = dir;
+      } else if (mode === 'host') {
+        const snake = snakes[0];
+        if (!snake) return;
+        const dir = dirNameToVec(dirName);
+        if (!isOpposite(snake.dir, dir)) snake.nextDir = dir;
+      } else {
+        sendInput({ dir: dirName });
+      }
+    };
+    canvas.addEventListener('touchstart', onStart, { passive: true });
+    canvas.addEventListener('touchend', onEnd, { passive: false });
+    return () => {
+      canvas.removeEventListener('touchstart', onStart);
+      canvas.removeEventListener('touchend', onEnd);
+    };
+  }, [phase, mode, sendInput]);
 
   // Saisie clavier — adaptée au mode
   useEffect(() => {
@@ -316,7 +365,7 @@ function SnakeComponent({ onFinish, mode = 'local', matchId }: GameProps) {
           </div>
         </div>
       )}
-      {phase === 'ready' && (
+      {phase === 'ready' && mode !== 'guest' && (
         <>
           <button className="btn btn-accent btn-lg" onClick={start}>Démarrer</button>
           <div style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center', lineHeight: 1.6 }}>
@@ -325,11 +374,17 @@ function SnakeComponent({ onFinish, mode = 'local', matchId }: GameProps) {
                   <div key={sk.label}>{sk.label} : {sk.controls}</div>
                 ))
               : (
-                  <div>Tu pilotes <strong>{mode === 'host' ? '🔴 J1' : '🔵 J2'}</strong> avec {myScheme === 'arrows' ? 'les flèches' : 'ZQSD/WASD'}. Dernier survivant gagne.</div>
+                  <div>Tu pilotes <strong>🔴 J1</strong> avec {myScheme === 'arrows' ? 'les flèches' : 'ZQSD/WASD'}. Dernier survivant gagne.</div>
                 )}
-            {mode === 'guest' && <div style={{ marginTop: 4, opacity: 0.7 }}>Mode distance — J1 fait tourner la partie.</div>}
+            {mode === 'host' && <div style={{ marginTop: 4, opacity: 0.7 }}>Mode distance — c'est toi qui lances la partie.</div>}
           </div>
         </>
+      )}
+      {phase === 'ready' && mode === 'guest' && (
+        <div style={{ color: 'var(--muted)', fontSize: 14, textAlign: 'center', lineHeight: 1.6, padding: '10px 0' }}>
+          ⚡ Tu es <strong style={{ color: '#5B8CFF' }}>🔵 J2</strong>. Contrôles : <strong>{myScheme === 'arrows' ? 'flèches' : 'ZQSD'}</strong>.<br />
+          <span style={{ opacity: 0.85 }}>En attente que ton adversaire lance la partie…</span>
+        </div>
       )}
       {phase === 'running' && (
         <div style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center', lineHeight: 1.6 }}>
