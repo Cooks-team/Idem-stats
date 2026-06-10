@@ -42,7 +42,14 @@ export function InboxBell() {
   });
   const acceptMatchMut = useMutation({
     mutationFn: (id: string) => api.acceptInvitation(id),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['inbox'] }); qc.invalidateQueries({ queryKey: ['matches'] }); },
+    // Accept = on file directement dans la salle du match (qui devient active).
+    // L'inviteur est déjà sur /matches/:id, sa page va se rafraîchir via SSE.
+    onSuccess: (m) => {
+      qc.invalidateQueries({ queryKey: ['inbox'] });
+      qc.invalidateQueries({ queryKey: ['matches'] });
+      setOpen(false);
+      nav(`/matches/${m.id}`);
+    },
   });
   const declineMatchMut = useMutation({
     mutationFn: (id: string) => api.declineInvitation(id),
