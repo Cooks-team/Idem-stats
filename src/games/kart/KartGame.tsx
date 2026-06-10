@@ -38,6 +38,7 @@ function KartGameImpl({ onFinish, player1, player2, mode = 'local', matchId }: G
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const [debugInfo, setDebugInfo] = useState<{ camX: number; camY: number; camZ: number; kartX: number; kartZ: number; heading: number; cssW: number; cssH: number; bufW: number; bufH: number } | null>(null);
   const inputRef = useRef<{ p1: KartInput; p2: KartInput }>({
     p1: emptyInput(), p2: emptyInput(),
   });
@@ -320,6 +321,22 @@ function KartGameImpl({ onFinish, player1, player2, mode = 'local', matchId }: G
         lastHudRef.current = tNow;
         setNow(tNow);
         setHudTick((v) => v + 1);
+        // Debug : on capture les coords caméra + kart + dims canvas pour
+        // afficher dans l'overlay (cf. DebugOverlay plus bas)
+        if (myKart && handles.cameras[0]) {
+          setDebugInfo({
+            camX: +handles.cameras[0].position.x.toFixed(1),
+            camY: +handles.cameras[0].position.y.toFixed(1),
+            camZ: +handles.cameras[0].position.z.toFixed(1),
+            kartX: +myKart.x.toFixed(1),
+            kartZ: +myKart.z.toFixed(1),
+            heading: +myKart.heading.toFixed(2),
+            cssW: canvas.parentElement?.clientWidth ?? 0,
+            cssH: canvas.parentElement?.clientHeight ?? 0,
+            bufW: handles.renderer.domElement.width,
+            bufH: handles.renderer.domElement.height,
+          });
+        }
       }
 
       raf = requestAnimationFrame(tick);
@@ -416,6 +433,7 @@ function KartGameImpl({ onFinish, player1, player2, mode = 'local', matchId }: G
         onToggle={() => toggleFullscreen(containerRef.current)}
       />
       <EmoteBar onPick={(key) => triggerEmote(stateRef.current, myKartIdRef.current, key, performance.now())} />
+      <DebugOverlay info={debugInfo} />
     </div>
   );
 }
@@ -445,6 +463,28 @@ function toggleFullscreen(el: HTMLElement | null) {
   } else {
     requestFullscreen(el).catch(() => {});
   }
+}
+
+function DebugOverlay({ info }: { info: null | { camX: number; camY: number; camZ: number; kartX: number; kartZ: number; heading: number; cssW: number; cssH: number; bufW: number; bufH: number } }) {
+  if (!info) return null;
+  // Le rapport sigma_X = écart entre la position cible théorique
+  // (kart.x - 15*cos(h), kart.z - 15*sin(h)) et la position réelle de la
+  // caméra. S'il n'est pas ~0, c'est qu'un truc écrit cam.position ailleurs.
+  const expectedCamX = +(info.kartX - 15 * Math.cos(info.heading)).toFixed(1);
+  const expectedCamZ = +(info.kartZ - 15 * Math.sin(info.heading)).toFixed(1);
+  return (
+    <div style={{
+      position: 'absolute', top: 12, left: 200, zIndex: 6,
+      background: 'rgba(0,0,0,0.7)', color: '#3DD68C',
+      fontFamily: 'monospace', fontSize: 11, padding: '6px 10px',
+      borderRadius: 8, lineHeight: 1.4, pointerEvents: 'none',
+    }}>
+      KART   ({info.kartX}, {info.kartZ})  h={info.heading}<br />
+      CAM    ({info.camX}, {info.camY}, {info.camZ})<br />
+      EXPECT ({expectedCamX}, 9, {expectedCamZ})<br />
+      VIEW   css={info.cssW}×{info.cssH}  buf={info.bufW}×{info.bufH}
+    </div>
+  );
 }
 
 function FullscreenToggle({ active, onToggle }: { active: boolean; onToggle: () => void }) {
