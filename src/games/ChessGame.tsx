@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
 
 // Échecs 1v1 local sur même écran/clavier, façon chess.com.
@@ -302,6 +302,18 @@ function ChessComponent({ onFinish, player1, player2 }: GameProps) {
   const [state, setState] = useState<GameState>(initGameState);
   const [selected, setSelected] = useState<[number, number] | null>(null);
   const [finished, setFinished] = useState(false);
+  // Drag-and-drop : suit le pointeur (souris ou doigt) avec position fixed,
+  // déplace la pièce de l'origine vers la case relâchée.
+  const [drag, setDrag] = useState<{
+    from: [number, number];
+    curX: number; curY: number;
+    pieceSize: number;
+  } | null>(null);
+  const boardRef = useRef<HTMLDivElement | null>(null);
+  // pointerdown enregistre la position de départ ; si la souris bouge > 4px
+  // avant le pointerup, on entre en drag. Sinon c'est un simple click et on
+  // garde le comportement click-to-move existant.
+  const pendingDragRef = useRef<{ from: [number, number]; startX: number; startY: number; pointerId: number } | null>(null);
 
   const legalForSelected = useMemo(
     () => selected ? legalMoves(state, selected[0], selected[1]) : [],
@@ -330,6 +342,8 @@ function ChessComponent({ onFinish, player1, player2 }: GameProps) {
   }, [status, state.turn, finished, onFinish]);
 
   function onSquareClick(r: number, f: number) {
+    // Garde le comportement click-to-move pour ceux qui préfèrent (et pour la
+    // 2e étape du flow "sélectionne puis click sur la cible").
     if (status !== 'play' || finished) return;
     if (selected) {
       const isLegal = legalForSelected.some(([lr, lf]) => lr === r && lf === f);
@@ -344,6 +358,69 @@ function ChessComponent({ onFinish, player1, player2 }: GameProps) {
     } else {
       const p = state.board[r][f];
       if (p && p.color === state.turn) setSelected([r, f]);
+    }
+  }
+
+  // Calcule la case (rank, file) du plateau à partir de coordonnées clientX/clientY.
+  function squareAtClient(clientX: number, clientY: number): [number, number] | null {
+    const board = boardRef.current;
+    if (!board) return null;
+    const rect = board.getBoundingClientRect();
+    if (clientX < rect.left || clientX > rect.right || clientY < rect.top || clientY > rect.bottom) return null;
+    const f = Math.floor(((clientX - rect.left) / rect.width) * 8);
+    const r = Math.floor(((clientY - rect.top) / rect.height) * 8);
+    return [Math.max(0, Math.min(7, r)), Math.max(0, Math.min(7, f))];
+  }
+
+  // ─ Pointer events pour drag-and-drop ──────────────────────────────────
+  function onSquarePointerDown(e: React.PointerEvent<HTMLButtonElement>, r: number, f: number) {
+    if (status !== 'play' || finished) return;
+    const piece = state.board[r][f];
+    if (!piece) return;
+    if (piece.color !== state.turn) return;
+    // Capture le pointeur pour suivre le drag même si le doigt sort de la case
+    try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* OK si pas supporté */ }
+    setSelected([r, f]);
+    pendingDragRef.current = { from: [r, f], startX: e.clientX, startY: e.clientY, pointerId: e.pointerId };
+  }
+
+  function onSquarePointerMove(e: React.PointerEvent<HTMLButtonElement>) {
+    const pending = pendingDragRef.current;
+    if (pending && pending.pointerId === e.pointerId && !drag) {
+      const dx = e.clientX - pending.startX;
+      const dy = e.clientY - pending.startY;
+      if (Math.hypot(dx, dy) > 4) {
+        // Démarre le drag visuel — la pièce suit le pointeur
+        const board = boardRef.current;
+        const pieceSize = board ? board.getBoundingClientRect().width / 8 : 60;
+        setDrag({ from: pending.from, curX: e.clientX, curY: e.clientY, pieceSize });
+      }
+      return;
+    }
+    if (drag) {
+      setDrag({ ...drag, curX: e.clientX, curY: e.clientY });
+    }
+  }
+
+  function onSquarePointerUp(e: React.PointerEvent<HTMLButtonElement>) {
+    const pending = pendingDragRef.current;
+    pendingDragRef.current = null;
+    if (drag) {
+      // Drop : trouve la case sous le pointeur
+      const target = squareAtClient(e.clientX, e.clientY);
+      if (target) {
+        const [tr, tf] = target;
+        const isLegal = legalForSelected.some(([lr, lf]) => lr === tr && lf === tf);
+        if (isLegal && !(drag.from[0] === tr && drag.from[1] === tf)) {
+          setState(applyMove(state, drag.from[0], drag.from[1], tr, tf, 'Q'));
+          setSelected(null);
+        }
+        // Si on lâche sur la case d'origine, on garde la sélection (= click)
+      }
+      setDrag(null);
+    } else if (pending) {
+      // Pas de drag → simple click, le piece est déjà sélectionnée via setSelected
+      // dans onSquarePointerDown. Rien d'autre à faire.
     }
   }
 
@@ -400,12 +477,48 @@ function ChessComponent({ onFinish, player1, player2 }: GameProps) {
 
       {/* Échiquier */}
       <ChessBoard
+        boardRef={boardRef}
         state={state}
         selected={selected}
         legalMoves={legalForSelected}
         checkSquare={checkSquare}
         onSquareClick={onSquareClick}
+        onSquarePointerDown={onSquarePointerDown}
+        onSquarePointerMove={onSquarePointerMove}
+        onSquarePointerUp={onSquarePointerUp}
+        hidePieceAt={drag ? drag.from : null}
+        hoveredSquare={drag ? squareAtClient(drag.curX, drag.curY) : null}
       />
+
+      {/* Pièce draggée — overlay fixed qui suit le pointeur */}
+      {drag && (
+        (() => {
+          const piece = state.board[drag.from[0]][drag.from[1]];
+          if (!piece) return null;
+          return (
+            <div style={{
+              position: 'fixed',
+              left: drag.curX - drag.pieceSize / 2,
+              top: drag.curY - drag.pieceSize / 2,
+              width: drag.pieceSize, height: drag.pieceSize,
+              pointerEvents: 'none', zIndex: 999,
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: drag.pieceSize * 0.85, lineHeight: 1,
+              color: piece.color === 'w' ? '#fff' : '#0a0a0a',
+              textShadow: piece.color === 'w'
+                ? '0 2px 6px rgba(0,0,0,0.8), 0 0 2px rgba(0,0,0,0.9)'
+                : '0 2px 4px rgba(255,255,255,0.25)',
+              fontFamily: '"Arial Unicode MS", "DejaVu Sans", sans-serif',
+              fontWeight: 900,
+              filter: 'drop-shadow(0 6px 12px rgba(0,0,0,0.6))',
+              transform: 'scale(1.1)',
+              transition: 'none',
+            }}>
+              {PIECE_UNI[piece.color][piece.type]}
+            </div>
+          );
+        })()
+      )}
 
       {/* Bandeau blancs en bas */}
       <PlayerStrip
@@ -454,10 +567,18 @@ function ChessComponent({ onFinish, player1, player2 }: GameProps) {
 
 function ChessBoard({
   state, selected, legalMoves, checkSquare, onSquareClick,
+  boardRef, onSquarePointerDown, onSquarePointerMove, onSquarePointerUp,
+  hidePieceAt, hoveredSquare,
 }: {
   state: GameState; selected: [number, number] | null;
   legalMoves: [number, number][]; checkSquare: [number, number] | null;
   onSquareClick: (r: number, f: number) => void;
+  boardRef: React.MutableRefObject<HTMLDivElement | null>;
+  onSquarePointerDown: (e: React.PointerEvent<HTMLButtonElement>, r: number, f: number) => void;
+  onSquarePointerMove: (e: React.PointerEvent<HTMLButtonElement>) => void;
+  onSquarePointerUp:   (e: React.PointerEvent<HTMLButtonElement>) => void;
+  hidePieceAt: [number, number] | null;
+  hoveredSquare: [number, number] | null;
 }) {
   return (
     <div style={{
@@ -475,12 +596,12 @@ function ChessBoard({
         ))}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column' }}>
-        <div style={{
+        <div ref={boardRef} style={{
           display: 'grid', gridTemplateColumns: 'repeat(8, 1fr)',
           aspectRatio: '1', borderRadius: 8, overflow: 'hidden',
           border: '2px solid #5e3b1a',
           boxShadow: '0 6px 24px rgba(0,0,0,0.5)',
-          touchAction: 'manipulation', userSelect: 'none',
+          touchAction: 'none', userSelect: 'none',
         }}>
           {state.board.map((row, r) => row.map((sq, f) => {
             const isLight = (r + f) % 2 === 0;
@@ -490,11 +611,14 @@ function ChessBoard({
             const isLastFrom = state.lastMove && state.lastMove.from[0] === r && state.lastMove.from[1] === f;
             const isLastTo   = state.lastMove && state.lastMove.to[0] === r && state.lastMove.to[1] === f;
             const isCheck = checkSquare?.[0] === r && checkSquare?.[1] === f;
-            // Couleurs chess.com : cream + green-olive
+            // Case sous le pointeur pendant un drag : on souligne en vert vif si
+            // c'est un coup légal (le user voit où la pièce va atterrir).
+            const isHoveredLegal = hoveredSquare && hoveredSquare[0] === r && hoveredSquare[1] === f && isLegal;
+            // La pièce d'origine pendant un drag : on la cache dans la case
+            // (l'overlay fixed la rend ailleurs).
+            const isDragOrigin = hidePieceAt && hidePieceAt[0] === r && hidePieceAt[1] === f;
             const baseColor = isLight ? '#eeeed2' : '#769656';
-            // Highlight last move (jaune translucide par-dessus)
             const lastMoveColor = isLastFrom || isLastTo ? 'rgba(255, 235, 110, 0.55)' : 'transparent';
-            // Sélection (vert plus saturé)
             const selColor = isSel ? 'rgba(187, 203, 43, 0.85)' : 'transparent';
             const checkBg = isCheck
               ? 'radial-gradient(circle at center, rgba(255, 75, 75, 0.75), rgba(255, 75, 75, 0) 60%)'
@@ -504,6 +628,10 @@ function ChessBoard({
               <button
                 key={`${r}-${f}`}
                 onClick={() => onSquareClick(r, f)}
+                onPointerDown={(e) => onSquarePointerDown(e, r, f)}
+                onPointerMove={onSquarePointerMove}
+                onPointerUp={onSquarePointerUp}
+                onPointerCancel={onSquarePointerUp}
                 style={{
                   position: 'relative', aspectRatio: '1',
                   background: baseColor, border: 'none', padding: 0, margin: 0, cursor: 'pointer',
@@ -517,17 +645,23 @@ function ChessBoard({
                   fontFamily: '"Arial Unicode MS", "DejaVu Sans", sans-serif',
                   fontWeight: 900,
                   outline: 'none',
+                  touchAction: 'none',
                 }}
               >
-                {/* Overlays : check d'abord, last move, selection */}
                 <div style={{ position: 'absolute', inset: 0, background: checkBg, pointerEvents: 'none' }} />
                 <div style={{ position: 'absolute', inset: 0, background: lastMoveColor, pointerEvents: 'none' }} />
                 <div style={{ position: 'absolute', inset: 0, background: selColor, pointerEvents: 'none' }} />
-                {/* Pièce */}
-                {sq && (
+                {/* Hover de drop : bordure verte épaisse autour de la case cible */}
+                {isHoveredLegal && (
+                  <div style={{
+                    position: 'absolute', inset: 0,
+                    boxShadow: 'inset 0 0 0 4px rgba(60, 180, 60, 0.85)',
+                    pointerEvents: 'none',
+                  }} />
+                )}
+                {sq && !isDragOrigin && (
                   <span style={{ position: 'relative', zIndex: 1 }}>{PIECE_UNI[sq.color][sq.type]}</span>
                 )}
-                {/* Indicateur coup légal */}
                 {isLegal && !isCapture && (
                   <div style={{
                     position: 'absolute', width: '26%', height: '26%',
