@@ -1,12 +1,12 @@
-import type { ReactNode } from 'react';
-import { NavLink, useNavigate } from 'react-router-dom';
+import { useEffect, useState, type ReactNode } from 'react';
+import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { Wordmark } from './Wordmark';
 import { Icon } from './Icon';
 import { Avatar } from './Avatar';
 import { useAuth } from '../auth/AuthContext';
 import { absoluteAvatar } from '../api/client';
 
-// Shell desktop : Sidebar + Topbar + Content. Reprend la structure exacte du design.
+// Shell desktop + mobile : Sidebar (drawer sur mobile) + Topbar + Content.
 export function Shell({ title, subtitle, children, onBack, action }: {
   title: string;
   subtitle?: string;
@@ -16,6 +16,12 @@ export function Shell({ title, subtitle, children, onBack, action }: {
 }) {
   const { user } = useAuth();
   const nav = useNavigate();
+  const loc = useLocation();
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Ferme le drawer à chaque changement de route
+  useEffect(() => { setDrawerOpen(false); }, [loc.pathname]);
+
   const items: Array<{ to: string; icon: 'trophy' | 'grid' | 'pulse' | 'user'; label: string; end?: boolean }> = [
     { to: '/', icon: 'trophy', label: 'Classement', end: true },
     { to: '/games', icon: 'grid', label: 'Jeux' },
@@ -26,7 +32,7 @@ export function Shell({ title, subtitle, children, onBack, action }: {
 
   return (
     <div className="shell">
-      <aside className="sidebar">
+      <aside className={`sidebar${drawerOpen ? ' open' : ''}`}>
         <div style={{ padding: '6px 10px 22px' }}><Wordmark /></div>
         <nav className="sidebar-nav">
           {items.map((it) => (
@@ -55,8 +61,17 @@ export function Shell({ title, subtitle, children, onBack, action }: {
         </div>
       </aside>
 
+      {/* Backdrop drawer mobile */}
+      <div
+        className={`shell-backdrop${drawerOpen ? ' show' : ''}`}
+        onClick={() => setDrawerOpen(false)}
+      />
+
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
         <header className="topbar">
+          <button className="burger" onClick={() => setDrawerOpen((v) => !v)} aria-label="Menu">
+            <Icon name="grid" size={20} />
+          </button>
           {onBack && (
             <button className="icon-btn" onClick={onBack}>
               <Icon name="back" size={20} />
