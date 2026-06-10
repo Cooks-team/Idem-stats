@@ -173,7 +173,7 @@ function AvatarUpload({ onChange, hasAvatar }: { onChange: (u: import('../api/ty
           setError(null);
           const f = e.target.files?.[0];
           if (!f) return;
-          if (f.size > 2 * 1024 * 1024) { setError('Image > 2 Mo'); return; }
+          // Plus de check de taille côté client : le serveur acceptera.
           uploadMut.mutate(f);
           if (ref.current) ref.current.value = '';
         }}
