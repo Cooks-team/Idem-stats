@@ -161,16 +161,13 @@ function SnakeComponent({ onFinish }: GameProps) {
       if (aliveCount <= 1) {
         clearInterval(interval);
         setPhase('done');
-        // Le match record est 2-player : on remonte TOUJOURS snakes[0] vs snakes[1]
-        // pour préserver le mapping J1=player1 / J2=player2 (avant ça on triait par
-        // survie, ce qui faisait que le score envoyé pouvait inverser le winner —
-        // P1 enregistré comme gagnant alors que J2 avait survécu).
-        // Bonus survie : +1 pour que le survivant ait un score strictement supérieur,
-        // même si la longueur des serpents est identique (cas du heurt sur la queue
-        // sans avoir mangé : J2 vivant len=4, J1 mort len=4 → on envoie 5 vs 4).
-        const aliveBonus = (sn: Snake) => sn.alive ? 1 : 0;
-        const sc1 = (s.snakes[0]?.body.length ?? 0) + aliveBonus(s.snakes[0]);
-        const sc2 = (s.snakes[1]?.body.length ?? 0) + aliveBonus(s.snakes[1]);
+        // Le gagnant n'est PAS celui qui a la plus longue queue mais celui qui
+        // SURVIT. On envoie juste un bit alive (1/0) par joueur. Si les deux
+        // meurent dans la même frame (head-on collision), 0-0 → match nul réel.
+        // En 4P, P1 et P2 du match record sont snakes[0]/snakes[1] — les 2 autres
+        // sont des invités locaux qui n'influencent pas le score record.
+        const sc1 = s.snakes[0]?.alive ? 1 : 0;
+        const sc2 = s.snakes[1]?.alive ? 1 : 0;
         setTimeout(() => onFinish(sc1, sc2), 600);
       }
     }, TICK_MS);
