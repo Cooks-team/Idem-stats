@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
 import { useRemoteGameSync } from '../realtime/useRemoteGameSync';
 
-// Pong classique 1v1 sur le même écran. Premier à 11 gagne.
+// Pong classique 1v1 sur le même écran. Premier à 10 gagne.
 //   J1 (rouge, gauche)  : ↑ ↓
 //   J2 (bleu,  droite)  : Z (ou W) / S
 // Physique simple : la balle accélère un peu à chaque rebond sur une raquette,
@@ -22,7 +22,7 @@ const SPEED_INCREMENT = 0.85;
 // play (entre 2 points). Sur 5 secondes de rally ça finit par +20% sans rebond.
 const SPEED_DRIFT_PER_FRAME = 1.005;
 const MAX_BALL_SPEED = 18;
-const WIN_SCORE = 11;
+const WIN_SCORE = 10;
 const TICK_MS = 16; // ~60fps
 
 interface Ball { x: number; y: number; vx: number; vy: number }
@@ -61,10 +61,10 @@ function initBall(direction: 1 | -1): Ball {
 }
 
 export const PongGame: GameModule = {
-  id: 'pingpong',
-  apiId: 'pingpong',
-  name: 'Ping-pong',
-  description: '1v1 Pong. J1 = flèches, J2 = ZQSD/WASD. Premier à 11.',
+  id: 'pong',
+  apiId: 'pong',
+  name: 'Pong',
+  description: '1v1 Pong. J1 = flèches, J2 = ZQSD/WASD. Premier à 10.',
   Component: PongComponent,
 };
 
@@ -192,7 +192,7 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
       const s = stateRef.current;
       // 1) Bouge les raquettes
       // J1 (host ou local) : flèches OU zqsd (peu importe en host car listener filtre)
-      if (s.keys.has('arrowup') || s.keys.has('z') || s.keys.has('w'))   s.paddles.p1Y = Math.max(0, s.paddles.p1Y - PADDLE_SPEED);
+      if (s.keys.has('arrowup') || s.keys.has('z') || s.keys.has('w')) s.paddles.p1Y = Math.max(0, s.paddles.p1Y - PADDLE_SPEED);
       if (s.keys.has('arrowdown') || s.keys.has('s')) s.paddles.p1Y = Math.min(H - PADDLE_H, s.paddles.p1Y + PADDLE_SPEED);
       // J2 :
       //  - en local : zqsd locales
@@ -201,7 +201,7 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
         if (s.keys.has('z') || s.keys.has('w')) s.paddles.p2Y = Math.max(0, s.paddles.p2Y - PADDLE_SPEED);
         if (s.keys.has('s')) s.paddles.p2Y = Math.min(H - PADDLE_H, s.paddles.p2Y + PADDLE_SPEED);
       } else {
-        if (s.guestUp)   s.paddles.p2Y = Math.max(0, s.paddles.p2Y - PADDLE_SPEED);
+        if (s.guestUp) s.paddles.p2Y = Math.max(0, s.paddles.p2Y - PADDLE_SPEED);
         if (s.guestDown) s.paddles.p2Y = Math.min(H - PADDLE_H, s.paddles.p2Y + PADDLE_SPEED);
       }
 
@@ -230,12 +230,12 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
       // 4) Collision raquettes — J1 est à DROITE (flèches), J2 à GAUCHE (ZQSD)
       // Raquette J2 (gauche) : x = 20..32
       if (s.ball.x - BALL_R <= 32 && s.ball.x - BALL_R >= 18 && s.ball.vx < 0
-          && s.ball.y >= s.paddles.p2Y && s.ball.y <= s.paddles.p2Y + PADDLE_H) {
+        && s.ball.y >= s.paddles.p2Y && s.ball.y <= s.paddles.p2Y + PADDLE_H) {
         s.ball = bounceFromPaddle(s.ball, s.paddles.p2Y, 1);
       }
       // Raquette J1 (droite) : x = W-32..W-20
       if (s.ball.x + BALL_R >= W - 32 && s.ball.x + BALL_R <= W - 18 && s.ball.vx > 0
-          && s.ball.y >= s.paddles.p1Y && s.ball.y <= s.paddles.p1Y + PADDLE_H) {
+        && s.ball.y >= s.paddles.p1Y && s.ball.y <= s.paddles.p1Y + PADDLE_H) {
         s.ball = bounceFromPaddle(s.ball, s.paddles.p1Y, -1);
       }
 

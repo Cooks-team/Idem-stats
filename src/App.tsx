@@ -11,6 +11,7 @@ import { GamePlayPage } from './pages/GamePlayPage';
 import { FriendsPage } from './pages/FriendsPage';
 import { LandingPage } from './pages/LandingPage';
 import { JoinByCodePage } from './pages/JoinByCodePage';
+import { MessagesPage } from './pages/MessagesPage';
 
 export function App() {
   return (
@@ -30,6 +31,7 @@ export function App() {
       <Route path="/friends" element={<RequireAuth><FriendsPage /></RequireAuth>} />
       <Route path="/join/:code" element={<RequireAuth><JoinByCodePage /></RequireAuth>} />
       <Route path="*" element={<Navigate to="/" replace />} />
+      <Route path="/messages" element={<RequireAuth><MessagesPage /></RequireAuth>} />
     </Routes>
   );
 }

@@ -84,6 +84,10 @@ export function FriendsPage() {
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button
                       className="btn btn-ghost btn-sm"
+                      onClick={() => nav(`/messages?to=${encodeURIComponent(r.user.pseudo)}`)}
+                    >💬 Message</button>
+                    <button
+                      className="btn btn-ghost btn-sm"
                       onClick={() => nav(`/matches/new?opponent=${encodeURIComponent(r.user.pseudo)}&duelMode=remote`)}
                     >⚔️ Duel rapide</button>
                     <button

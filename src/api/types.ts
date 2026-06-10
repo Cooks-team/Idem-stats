@@ -173,3 +173,17 @@ export const SHIFUMI_LOSES_TO: Record<ShifumiPick, ShifumiPick> = {
   paper: 'rock',
   scissors: 'paper',
 };
+
+export interface Message {
+  id: string;
+  senderId: string;
+  recipientId: string;
+  body: string;
+  createdAt: string;
+  readAt: string | null;
+}
+export interface ConversationSummary {
+  user: User;
+  lastMessage: Message | null;
+  unread: number;
+}

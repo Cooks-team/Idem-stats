@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
+  <rect width="32" height="32" rx="7" fill="#0B0D10"/>
+  <!-- 3 barres du podium : argent (court) / accent (haut) / bronze (le plus court) -->
+  <rect x="7.5"  y="14" width="4.5" height="10" rx="1.5" fill="#C7D0DA"/>
+  <rect x="13.75" y="7"  width="4.5" height="17" rx="1.5" fill="#D6FF3D"/>
+  <rect x="20"   y="17" width="4.5" height="7"  rx="1.5" fill="#E08A4B"/>
+</svg>
