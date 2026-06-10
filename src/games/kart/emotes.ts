@@ -8,19 +8,24 @@ export interface EmoteDef {
   label: string;      // texte affiché en dessous (court)
   bg: string;         // fond du bullet (CSS color)
   fg: string;         // couleur du texte
-  shake: 'gentle' | 'mad' | 'flex' | 'cry' | 'spin';
+  shake: 'gentle' | 'mad' | 'flex' | 'cry' | 'spin' | 'bounce' | 'pulse';
+  // Si défini, on rend un objet 3D animé custom au-dessus du kart au lieu
+  // du bullet sprite. Pour l'instant : 'sharknado' (cône-tornade + requins
+  // en orbite).
+  custom3d?: 'sharknado';
 }
 
-// 8 emotes, accessibles via touches 1-8.
+// 9 emotes, accessibles via touches 1-9. Le 9e (sharknado) est rendu en 3D.
 export const EMOTES: EmoteDef[] = [
   { key: 'rage',   emoji: '🤬', label: 'RAGE',       bg: '#c0392b', fg: '#ffffff', shake: 'mad' },
   { key: 'clown',  emoji: '🤡', label: 'CLOWN',      bg: '#ff5b9c', fg: '#ffffff', shake: 'spin' },
   { key: 'goat',   emoji: '🐐', label: 'GOAT',       bg: '#FFD23B', fg: '#1a1a1a', shake: 'flex' },
   { key: 'l',      emoji: '🅛',  label: 'PRENDS UN L', bg: '#1a1a1a', fg: '#3DD68C', shake: 'gentle' },
-  { key: 'caca',   emoji: '💩', label: 'CACA',       bg: '#8B4513', fg: '#ffffff', shake: 'gentle' },
+  { key: 'caca',   emoji: '💩', label: 'CACA',       bg: '#8B4513', fg: '#ffffff', shake: 'bounce' },
   { key: 'cry',    emoji: '😭', label: 'PLEURE',     bg: '#3498db', fg: '#ffffff', shake: 'cry' },
   { key: 'fire',   emoji: '🔥', label: 'EN FEU',     bg: '#FF6B57', fg: '#FFD23B', shake: 'mad' },
-  { key: 'crown',  emoji: '👑', label: 'KING',       bg: '#3DD68C', fg: '#0d1f15', shake: 'flex' },
+  { key: 'crown',  emoji: '👑', label: 'KING',       bg: '#3DD68C', fg: '#0d1f15', shake: 'pulse' },
+  { key: 'sharknado', emoji: '🦈', label: 'SHARKNADO', bg: '#0d1f3a', fg: '#3DD68C', shake: 'spin', custom3d: 'sharknado' },
 ];
 
 export function emoteByKey(key: string): EmoteDef | undefined {

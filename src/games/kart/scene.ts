@@ -409,30 +409,43 @@ export function syncMeshes(state: { karts: KartState[]; itemBoxes: ItemBox[]; ac
   }
 }
 
-// Place la caméra en troisième personne derrière un kart.
-// snap=true → la caméra se cale immédiatement sur la cible (utilisé au premier
-// frame de la course, sinon on voit le kart de très près le temps que le lerp
-// converge depuis (0,6,10) — le bug "grass partout" du premier essai).
+// Caméra "rigide-mais-doux" : position pile derrière le kart (snappée pour
+// éviter toute dérive), hauteur lerpée pour rester douce sur les bosses, et
+// lookAt() DIRECTEMENT sur le kart → il reste pile au centre de l'écran à
+// chaque frame, même en plein virage. Plus de "kart-poussé-au-bord" pendant
+// les changements rapides de heading.
 export function followKart(cam: THREE.PerspectiveCamera, kart: KartState, fpsMode: boolean, dt: number, snap = false) {
-  // 3e personne : un peu plus loin et plus haut qu'avant — la route doit être
-  // bien visible devant, sinon on perd les virages.
-  const back = fpsMode ? -0.4 : 10;
-  const up   = fpsMode ?  1.7 : 5.5;
-  const tx = kart.x - Math.cos(kart.heading) * back;
-  const tz = kart.z - Math.sin(kart.heading) * back;
-  const ty = up;
-  const lerp = snap ? 1 : Math.min(1, dt * 8);
-  cam.position.x += (tx - cam.position.x) * lerp;
-  cam.position.y += (ty - cam.position.y) * lerp;
-  cam.position.z += (tz - cam.position.z) * lerp;
-  // Regarde 8 unités devant le kart (sinon en virage on perd la route)
-  const lx = kart.x + Math.cos(kart.heading) * 8;
-  const lz = kart.z + Math.sin(kart.heading) * 8;
-  cam.lookAt(lx, fpsMode ? 1.6 : 1.0, lz);
+  const back = fpsMode ? -0.5 : 9.5;
+  const up   = fpsMode ?  1.6 : 5.0;
+  const camX = kart.x - Math.cos(kart.heading) * back;
+  const camZ = kart.z - Math.sin(kart.heading) * back;
+  // X/Z snappés sur la cible (zéro lerp horizontal) — c'est ce qui maintient
+  // le kart dead-center pendant les virages.
+  cam.position.x = camX;
+  cam.position.z = camZ;
+  // Y doucement lerpé pour ne pas sauter visuellement.
+  const yLerp = snap ? 1 : Math.min(1, dt * 6);
+  cam.position.y += (up - cam.position.y) * yLerp;
+  // En 3e personne, on regarde le kart lui-même (centre = kart). En FPS, on
+  // regarde 4u devant le kart pour voir la route.
+  const ty = fpsMode ? 1.5 : 0.8;
+  if (fpsMode) {
+    cam.lookAt(kart.x + Math.cos(kart.heading) * 4, ty, kart.z + Math.sin(kart.heading) * 4);
+  } else {
+    cam.lookAt(kart.x, ty, kart.z);
+  }
 }
 
-// Affiche / met à jour la bulle d'emote au-dessus de chaque kart actif.
-// Animation = scale-bounce + rotation légère selon le 'shake' de l'emote.
+// Affiche / met à jour l'emote au-dessus de chaque kart actif.
+// 2 rendus possibles :
+//  - sprite (par défaut) : bullet canvas avec emoji + label, animé via scale
+//    et rotation selon le 'shake' de l'emote.
+//  - custom3d='sharknado'  : groupe 3D = cône tornade qui tourne + 3 requins
+//    en orbite verticale + spirale de débris. Beaucoup plus expressif que
+//    le sprite plat pour ce qu'on veut transmettre.
+//
+// On garde un seul registre h.emoteSprites — qu'il s'agisse d'un Sprite ou
+// d'un Group, three.js sait remove() les deux pareils.
 export function syncEmotes(karts: KartState[], h: SceneHandles, now: number) {
   const live = new Set<string>();
   for (const kart of karts) {
@@ -441,16 +454,44 @@ export function syncEmotes(karts: KartState[], h: SceneHandles, now: number) {
     live.add(kart.id);
     const def = emoteByKey(kart.emoteKey!);
     if (!def) continue;
-    let sp = h.emoteSprites.get(kart.id);
-    if (!sp) {
-      const tex = new THREE.CanvasTexture(emoteCanvasFor(def));
-      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
-      sp = new THREE.Sprite(mat);
-      sp.scale.set(3, 3, 1);
-      h.emoteSprites.set(kart.id, sp);
-      h.scene.add(sp);
-    } else {
-      // Si l'emote a changé, on remplace la texture
+
+    const remaining = (kart.emoteUntil! - now) / 2500;
+    const opacity = remaining > 0.85
+      ? (1 - remaining) / 0.15
+      : remaining < 0.2
+      ? remaining / 0.2
+      : 1;
+    const opacityClamped = Math.max(0, Math.min(1, opacity));
+
+    let obj = h.emoteSprites.get(kart.id) as THREE.Object3D | undefined;
+
+    // Si le type d'emote diffère (sprite ↔ 3d), on remplace l'objet.
+    const wantedKind = def.custom3d ? def.custom3d : 'sprite';
+    const currentKind = obj?.userData?.emoteKind as string | undefined;
+    if (obj && currentKind !== wantedKind) {
+      h.scene.remove(obj);
+      disposeObject(obj);
+      obj = undefined;
+      h.emoteSprites.delete(kart.id);
+    }
+
+    if (!obj) {
+      if (def.custom3d === 'sharknado') {
+        obj = buildSharknado();
+      } else {
+        const tex = new THREE.CanvasTexture(emoteCanvasFor(def));
+        const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+        const sp = new THREE.Sprite(mat);
+        sp.scale.set(3, 3, 1);
+        obj = sp;
+      }
+      obj.userData.emoteKind = wantedKind;
+      h.scene.add(obj);
+      // On stocke en cast — le map type est Sprite mais on triche
+      h.emoteSprites.set(kart.id, obj as unknown as THREE.Sprite);
+    } else if (!def.custom3d) {
+      // Sprite existant, peut-être emote changé : refresh texture
+      const sp = obj as THREE.Sprite;
       const mat = sp.material as THREE.SpriteMaterial;
       const map = mat.map as THREE.CanvasTexture | null;
       const wantedCanvas = emoteCanvasFor(def);
@@ -460,38 +501,151 @@ export function syncEmotes(karts: KartState[], h: SceneHandles, now: number) {
         mat.needsUpdate = true;
       }
     }
-    // Position au-dessus du kart, légère lévitation
-    const remaining = (kart.emoteUntil! - now) / 2500;
-    const opacity = remaining > 0.85
-      ? (1 - remaining) / 0.15                  // pop-in
-      : remaining < 0.2
-      ? remaining / 0.2                          // fade-out
-      : 1;
-    (sp.material as THREE.SpriteMaterial).opacity = Math.max(0, Math.min(1, opacity));
-    sp.position.set(kart.x, 4.5 + Math.sin(now * 0.006) * 0.2, kart.z);
-    // Petite secousse selon le type
-    const t = now * 0.01;
-    let s = 1;
-    switch (def.shake) {
-      case 'mad':    s = 1 + Math.sin(t * 3) * 0.08; break;
-      case 'flex':   s = 1 + Math.sin(t)     * 0.05; break;
-      case 'spin':   sp.material.rotation = (now * 0.004) % (Math.PI * 2); break;
-      case 'cry':    s = 1 - Math.abs(Math.sin(t * 1.5)) * 0.06; break;
-      default:       s = 1 + Math.sin(t * 0.7) * 0.03;
+
+    obj.position.set(kart.x, 4.6 + Math.sin(now * 0.006) * 0.2, kart.z);
+    obj.visible = opacityClamped > 0;
+
+    if (def.custom3d === 'sharknado') {
+      animateSharknado(obj as THREE.Group, now, opacityClamped);
+    } else {
+      const sp = obj as THREE.Sprite;
+      (sp.material as THREE.SpriteMaterial).opacity = opacityClamped;
+      animateSprite(sp, def, now);
     }
-    sp.scale.set(3 * s, 3 * s, 1);
   }
   // Cleanup des emotes expirés
   for (const [id, sp] of h.emoteSprites) {
     if (!live.has(id)) {
       h.scene.remove(sp);
-      const mat = sp.material as THREE.SpriteMaterial;
-      const map = mat.map as THREE.CanvasTexture | null;
-      if (map) map.dispose();
-      mat.dispose();
+      disposeObject(sp);
       h.emoteSprites.delete(id);
     }
   }
+}
+
+function animateSprite(sp: THREE.Sprite, def: { shake: string }, now: number) {
+  const t = now * 0.01;
+  let scale = 1;
+  let rotation = 0;
+  switch (def.shake) {
+    case 'mad':    scale = 1 + Math.sin(t * 3.5) * 0.14; rotation = Math.sin(t * 6) * 0.18; break;
+    case 'flex':   scale = 1 + Math.sin(t * 1.6) * 0.10; break;
+    case 'spin':   rotation = (now * 0.0045) % (Math.PI * 2); scale = 1 + Math.sin(t * 2) * 0.06; break;
+    case 'cry':    scale = 1 - Math.abs(Math.sin(t * 1.5)) * 0.10; rotation = Math.sin(t) * 0.12; break;
+    case 'bounce': scale = 1 + Math.abs(Math.sin(t * 2.5)) * 0.18; break;
+    case 'pulse':  scale = 1 + Math.sin(t * 1.2) * 0.18; break;
+    default:       scale = 1 + Math.sin(t * 0.7) * 0.05;
+  }
+  sp.scale.set(3 * scale, 3 * scale, 1);
+  sp.material.rotation = rotation;
+}
+
+// ─── Sharknado : cône-tornade + requins en orbite ────────────────────────
+// Le groupe expose userData.spinSpeed, userData.sharks (pour anim) et
+// userData.fadeMats (pour fade in/out via opacity sur tous les matériaux).
+function buildSharknado(): THREE.Group {
+  const g = new THREE.Group();
+  const fadeMats: THREE.Material[] = [];
+
+  // Tornade : 4 cônes empilés de tailles décroissantes, tournent ensemble
+  const funnelGroup = new THREE.Group();
+  g.add(funnelGroup);
+  const funnelColors = [0xb0c4de, 0xa0b8d4, 0x90accc, 0x80a0c4];
+  for (let i = 0; i < 4; i++) {
+    const r = 1.6 - i * 0.32;
+    const h = 0.9;
+    const cone = new THREE.Mesh(
+      new THREE.ConeGeometry(r, h, 12, 1, true),
+      new THREE.MeshLambertMaterial({
+        color: funnelColors[i],
+        transparent: true,
+        opacity: 0.7,
+        side: THREE.DoubleSide,
+      }),
+    );
+    cone.position.y = 0.4 + i * 0.85;
+    cone.rotation.x = Math.PI; // cône pointe vers le bas
+    funnelGroup.add(cone);
+    fadeMats.push(cone.material as THREE.Material);
+  }
+
+  // 3 requins (sprite avec emoji 🦈) qui orbitent à différentes hauteurs
+  const sharks: THREE.Sprite[] = [];
+  for (let i = 0; i < 3; i++) {
+    const c = document.createElement('canvas');
+    c.width = 128; c.height = 128;
+    const ctx = c.getContext('2d')!;
+    ctx.font = '96px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🦈', 64, 70);
+    const tex = new THREE.CanvasTexture(c);
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+    const sp = new THREE.Sprite(mat);
+    sp.scale.set(1.0, 1.0, 1);
+    g.add(sp);
+    sharks.push(sp);
+    fadeMats.push(mat);
+  }
+
+  // Petits débris (cubes orange-foncé qui tournent dans une spirale)
+  const debris: THREE.Mesh[] = [];
+  for (let i = 0; i < 6; i++) {
+    const mat = new THREE.MeshLambertMaterial({ color: 0x553a1a, transparent: true });
+    const m = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.18, 0.18), mat);
+    g.add(m);
+    debris.push(m);
+    fadeMats.push(mat);
+  }
+
+  g.userData = { sharks, debris, fadeMats, funnelGroup };
+  return g;
+}
+
+function animateSharknado(g: THREE.Group, now: number, opacity: number) {
+  const t = now * 0.001;
+  const ud = g.userData as {
+    sharks: THREE.Sprite[];
+    debris: THREE.Mesh[];
+    fadeMats: THREE.Material[];
+    funnelGroup: THREE.Group;
+  };
+  // Rotation tornade
+  ud.funnelGroup.rotation.y = t * 4;
+  // Requins en orbite verticale (rayon 1.6, hauteur 0.5–3.5)
+  for (let i = 0; i < ud.sharks.length; i++) {
+    const phase = t * 2.6 + (i * (Math.PI * 2) / ud.sharks.length);
+    const r = 1.6 + Math.sin(phase * 0.7 + i) * 0.2;
+    const yPath = 0.6 + ((Math.sin(phase) + 1) / 2) * 3;
+    ud.sharks[i].position.set(Math.cos(phase) * r, yPath, Math.sin(phase) * r);
+    // Le sprite reste face caméra (Sprite par défaut), mais on peut le faire scale
+    const breath = 1 + Math.sin(t * 6 + i) * 0.1;
+    ud.sharks[i].scale.set(breath, breath, 1);
+  }
+  // Débris en spirale ascendante
+  for (let i = 0; i < ud.debris.length; i++) {
+    const phase = t * 5 + (i * Math.PI * 2 / ud.debris.length);
+    const yPath = (phase * 0.4 + i * 0.3) % 4;
+    const r = 0.8 + yPath * 0.2;
+    const d = ud.debris[i];
+    d.position.set(Math.cos(phase) * r, 0.2 + yPath, Math.sin(phase) * r);
+    d.rotation.set(phase, phase * 1.3, phase * 0.7);
+  }
+  // Fade sur tous les matériaux
+  for (const mat of ud.fadeMats) {
+    (mat as THREE.MeshLambertMaterial | THREE.SpriteMaterial).opacity =
+      Math.min((mat.userData?.baseOpacity as number) ?? 1, opacity);
+  }
+}
+
+function disposeObject(obj: THREE.Object3D) {
+  obj.traverse((c) => {
+    const m = c as THREE.Mesh & { material?: THREE.Material | THREE.Material[] };
+    if ((m as { geometry?: THREE.BufferGeometry }).geometry) (m as { geometry?: THREE.BufferGeometry }).geometry!.dispose?.();
+    const mat = m.material;
+    if (Array.isArray(mat)) mat.forEach((x) => x.dispose?.());
+    else mat?.dispose?.();
+  });
 }
 
 export { KART_COLORS };
