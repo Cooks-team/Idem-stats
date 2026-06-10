@@ -33,6 +33,10 @@ export interface KartState {
   finished: boolean;
   finishedAt?: number;
   isBot: boolean;
+  // Emote actif au-dessus du kart : affiché ~2.5s puis effacé.
+  // emoteKey indexe EMOTES dans emotes.ts (ex. 'rage', 'clown', 'goat'…).
+  emoteKey?: string | null;
+  emoteUntil?: number;
 }
 
 export interface TrackSample {

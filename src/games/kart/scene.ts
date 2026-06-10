@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { ActiveItem, ItemBox, KartState, TrackData } from './types';
+import { emoteByKey, emoteCanvasFor } from './emotes';
 
 // Tout le visuel three.js du jeu. Pas d'assets externes — primitives + matériaux
 // pour un rendu arcade low-poly cohérent.
@@ -11,6 +12,7 @@ export interface SceneHandles {
   renderer: THREE.WebGLRenderer;
   cameras: THREE.PerspectiveCamera[];  // une par viewport (1 ou 2)
   kartMeshes: Map<string, THREE.Group>;
+  emoteSprites: Map<string, THREE.Sprite>;
   itemBoxMeshes: Map<string, THREE.Mesh>;
   activeItemMeshes: Map<string, THREE.Object3D>;
   resize: (w: number, h: number) => void;
@@ -58,6 +60,7 @@ export function buildScene(track: TrackData, canvas: HTMLCanvasElement, splitScr
   }
 
   const kartMeshes = new Map<string, THREE.Group>();
+  const emoteSprites = new Map<string, THREE.Sprite>();
   const itemBoxMeshes = new Map<string, THREE.Mesh>();
   const activeItemMeshes = new Map<string, THREE.Object3D>();
 
@@ -84,7 +87,7 @@ export function buildScene(track: TrackData, canvas: HTMLCanvasElement, splitScr
     });
   };
 
-  return { scene, renderer, cameras, kartMeshes, itemBoxMeshes, activeItemMeshes, resize, dispose };
+  return { scene, renderer, cameras, kartMeshes, emoteSprites, itemBoxMeshes, activeItemMeshes, resize, dispose };
 }
 
 function buildRoadMesh(track: TrackData): THREE.Mesh {
@@ -407,20 +410,88 @@ export function syncMeshes(state: { karts: KartState[]; itemBoxes: ItemBox[]; ac
 }
 
 // Place la caméra en troisième personne derrière un kart.
-export function followKart(cam: THREE.PerspectiveCamera, kart: KartState, fpsMode: boolean, dt: number) {
-  const back = fpsMode ? -0.1 : 7;
-  const up = fpsMode ? 1.7 : 4.2;
+// snap=true → la caméra se cale immédiatement sur la cible (utilisé au premier
+// frame de la course, sinon on voit le kart de très près le temps que le lerp
+// converge depuis (0,6,10) — le bug "grass partout" du premier essai).
+export function followKart(cam: THREE.PerspectiveCamera, kart: KartState, fpsMode: boolean, dt: number, snap = false) {
+  // 3e personne : un peu plus loin et plus haut qu'avant — la route doit être
+  // bien visible devant, sinon on perd les virages.
+  const back = fpsMode ? -0.4 : 10;
+  const up   = fpsMode ?  1.7 : 5.5;
   const tx = kart.x - Math.cos(kart.heading) * back;
   const tz = kart.z - Math.sin(kart.heading) * back;
   const ty = up;
-  const lerp = Math.min(1, dt * 8);
+  const lerp = snap ? 1 : Math.min(1, dt * 8);
   cam.position.x += (tx - cam.position.x) * lerp;
   cam.position.y += (ty - cam.position.y) * lerp;
   cam.position.z += (tz - cam.position.z) * lerp;
-  // Regarde devant
-  const lx = kart.x + Math.cos(kart.heading) * 4;
-  const lz = kart.z + Math.sin(kart.heading) * 4;
+  // Regarde 8 unités devant le kart (sinon en virage on perd la route)
+  const lx = kart.x + Math.cos(kart.heading) * 8;
+  const lz = kart.z + Math.sin(kart.heading) * 8;
   cam.lookAt(lx, fpsMode ? 1.6 : 1.0, lz);
+}
+
+// Affiche / met à jour la bulle d'emote au-dessus de chaque kart actif.
+// Animation = scale-bounce + rotation légère selon le 'shake' de l'emote.
+export function syncEmotes(karts: KartState[], h: SceneHandles, now: number) {
+  const live = new Set<string>();
+  for (const kart of karts) {
+    const active = kart.emoteKey && (kart.emoteUntil ?? 0) > now;
+    if (!active) continue;
+    live.add(kart.id);
+    const def = emoteByKey(kart.emoteKey!);
+    if (!def) continue;
+    let sp = h.emoteSprites.get(kart.id);
+    if (!sp) {
+      const tex = new THREE.CanvasTexture(emoteCanvasFor(def));
+      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true });
+      sp = new THREE.Sprite(mat);
+      sp.scale.set(3, 3, 1);
+      h.emoteSprites.set(kart.id, sp);
+      h.scene.add(sp);
+    } else {
+      // Si l'emote a changé, on remplace la texture
+      const mat = sp.material as THREE.SpriteMaterial;
+      const map = mat.map as THREE.CanvasTexture | null;
+      const wantedCanvas = emoteCanvasFor(def);
+      if (!map || map.image !== wantedCanvas) {
+        if (map) map.dispose();
+        mat.map = new THREE.CanvasTexture(wantedCanvas);
+        mat.needsUpdate = true;
+      }
+    }
+    // Position au-dessus du kart, légère lévitation
+    const remaining = (kart.emoteUntil! - now) / 2500;
+    const opacity = remaining > 0.85
+      ? (1 - remaining) / 0.15                  // pop-in
+      : remaining < 0.2
+      ? remaining / 0.2                          // fade-out
+      : 1;
+    (sp.material as THREE.SpriteMaterial).opacity = Math.max(0, Math.min(1, opacity));
+    sp.position.set(kart.x, 4.5 + Math.sin(now * 0.006) * 0.2, kart.z);
+    // Petite secousse selon le type
+    const t = now * 0.01;
+    let s = 1;
+    switch (def.shake) {
+      case 'mad':    s = 1 + Math.sin(t * 3) * 0.08; break;
+      case 'flex':   s = 1 + Math.sin(t)     * 0.05; break;
+      case 'spin':   sp.material.rotation = (now * 0.004) % (Math.PI * 2); break;
+      case 'cry':    s = 1 - Math.abs(Math.sin(t * 1.5)) * 0.06; break;
+      default:       s = 1 + Math.sin(t * 0.7) * 0.03;
+    }
+    sp.scale.set(3 * s, 3 * s, 1);
+  }
+  // Cleanup des emotes expirés
+  for (const [id, sp] of h.emoteSprites) {
+    if (!live.has(id)) {
+      h.scene.remove(sp);
+      const mat = sp.material as THREE.SpriteMaterial;
+      const map = mat.map as THREE.CanvasTexture | null;
+      if (map) map.dispose();
+      mat.dispose();
+      h.emoteSprites.delete(id);
+    }
+  }
 }
 
 export { KART_COLORS };
