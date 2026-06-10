@@ -34,6 +34,7 @@ import { SnakeGame } from './SnakeGame';
 import { PongGame } from './PongGame';
 import { DartsGame } from './DartsGame';
 import { BabyfootGame } from './BabyfootGame';
+import { BilliardsGame } from './BilliardsGame';
 
 export const GAME_MODULES: GameModule[] = [
   ClickerGame,
@@ -41,6 +42,7 @@ export const GAME_MODULES: GameModule[] = [
   PongGame,
   DartsGame,
   BabyfootGame,
+  BilliardsGame,
 ];
 
 export function moduleById(id: string): GameModule | undefined {
