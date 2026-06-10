@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
+import { useRemoteGameSync } from '../realtime/useRemoteGameSync';
 
 // Snake local multi-joueurs : 2 ou 4 sur le même écran/clavier.
 // Schéma de contrôle :
@@ -95,17 +96,55 @@ export const SnakeGame: GameModule = {
   Component: SnakeComponent,
 };
 
-function SnakeComponent({ onFinish }: GameProps) {
+type Scheme = 'arrows' | 'zqsd';
+type DirName = 'up' | 'down' | 'left' | 'right';
+
+interface SnakeStateMsg {
+  snakes: Array<{ body: Pt[]; dir: Dir; alive: boolean }>;
+  food: Pt;
+  tick: number;
+}
+interface SnakeInputMsg {
+  dir: DirName;
+}
+
+function SnakeComponent({ onFinish, mode = 'local', matchId }: GameProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [phase, setPhase] = useState<'ready' | 'running' | 'done'>('ready');
+  // En remote, on force 2 joueurs (le match record n'en accepte que 2 de toute façon).
   const [playerCount, setPlayerCount] = useState<2 | 4>(2);
+  const effectivePlayerCount: 2 | 4 = mode === 'local' ? playerCount : 2;
+  const [myScheme, setMyScheme] = useState<Scheme>(mode === 'guest' ? 'zqsd' : 'arrows');
   const [isFullscreen, setIsFullscreen] = useState(false);
   const stateRef = useRef<{ snakes: Snake[]; food: Pt }>({ snakes: initSnakes(2), food: { x: 14, y: 10 } });
   const [tick, setTick] = useState(0);
 
+  // Sync remote
+  const { sendInput, sendState } = useRemoteGameSync<SnakeInputMsg, SnakeStateMsg>({
+    matchId: matchId ?? null,
+    role: mode,
+    onInput: (input) => {
+      // Host : applique le nextDir du guest (snake[1] = J2)
+      const s = stateRef.current;
+      const snake = s.snakes[1];
+      if (!snake) return;
+      const dir = dirNameToVec(input.dir);
+      if (!isOpposite(snake.dir, dir)) snake.nextDir = dir;
+    },
+    onState: (snapshot) => {
+      // Guest : remplace l'état local par celui reçu
+      const s = stateRef.current;
+      s.snakes = snapshot.snakes.map((sn) => ({ ...sn, body: sn.body.map((p) => ({ ...p })), nextDir: sn.dir, id: 0 as PlayerId } as Snake));
+      // Fix les ids car ils ne sont pas sérialisés
+      s.snakes.forEach((sn, i) => { sn.id = i as PlayerId; });
+      s.food = { ...snapshot.food };
+      setTick(snapshot.tick);
+    },
+  });
+
   const start = () => {
-    stateRef.current = { snakes: initSnakes(playerCount), food: { x: 14, y: 10 } };
+    stateRef.current = { snakes: initSnakes(effectivePlayerCount), food: { x: 14, y: 10 } };
     setPhase('running');
     setTick(0);
     // Demande le fullscreen sur le wrapper. Le browser peut refuser si non
@@ -136,43 +175,74 @@ function SnakeComponent({ onFinish }: GameProps) {
     }
   }, []);
 
-  // Saisie clavier — multiplexe sur les 2 ou 4 snakes selon le mode actuel
+  // Saisie clavier — adaptée au mode
   useEffect(() => {
     if (phase !== 'running') return;
     const onKey = (e: KeyboardEvent) => {
       const snakes = stateRef.current.snakes;
       const k = e.key.toLowerCase();
-      const handled = applyKey(k, snakes);
-      if (handled) e.preventDefault();
+      if (mode === 'local') {
+        // Tout le clavier pilote les 2 ou 4 serpents
+        if (applyKey(k, snakes)) e.preventDefault();
+        return;
+      }
+      // Remote : on ne capture QUE le schéma préféré du joueur
+      const dirName = keyToDir(k, myScheme);
+      if (!dirName) return;
+      e.preventDefault();
+      if (mode === 'host') {
+        // J1 (snake[0]) → applique direct
+        const snake = snakes[0];
+        if (!snake) return;
+        const dir = dirNameToVec(dirName);
+        if (!isOpposite(snake.dir, dir)) snake.nextDir = dir;
+      } else {
+        // Guest : envoie au host
+        sendInput({ dir: dirName });
+      }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [phase]);
+  }, [phase, mode, myScheme, sendInput]);
 
-  // Boucle de jeu
+  // Boucle de jeu — seulement host ou local
   useEffect(() => {
     if (phase !== 'running') return;
+    if (mode === 'guest') return;
     const interval = window.setInterval(() => {
       const s = stateRef.current;
       stepSnakes(s);
-      setTick((t) => t + 1);
-      // Fin de partie : un seul ou zéro survivant
+      const nextTick = tick + 1;
+      setTick(nextTick);
+
+      // Broadcast state au guest (snapshot léger, ~9 fois/sec à 110ms)
+      if (mode === 'host' && matchId) {
+        sendState({
+          snakes: s.snakes.map((sn) => ({ body: sn.body, dir: sn.dir, alive: sn.alive })),
+          food: s.food,
+          tick: nextTick,
+        });
+      }
+
       const aliveCount = s.snakes.filter((sn) => sn.alive).length;
       if (aliveCount <= 1) {
         clearInterval(interval);
         setPhase('done');
-        // Le gagnant n'est PAS celui qui a la plus longue queue mais celui qui
-        // SURVIT. On envoie juste un bit alive (1/0) par joueur. Si les deux
-        // meurent dans la même frame (head-on collision), 0-0 → match nul réel.
-        // En 4P, P1 et P2 du match record sont snakes[0]/snakes[1] — les 2 autres
-        // sont des invités locaux qui n'influencent pas le score record.
         const sc1 = s.snakes[0]?.alive ? 1 : 0;
         const sc2 = s.snakes[1]?.alive ? 1 : 0;
+        // Dernier broadcast pour que le guest voit la fin
+        if (mode === 'host' && matchId) {
+          sendState({
+            snakes: s.snakes.map((sn) => ({ body: sn.body, dir: sn.dir, alive: sn.alive })),
+            food: s.food,
+            tick: nextTick + 1,
+          });
+        }
         setTimeout(() => onFinish(sc1, sc2), 600);
       }
     }, TICK_MS);
     return () => clearInterval(interval);
-  }, [phase, onFinish]);
+  }, [phase, mode, matchId, sendState, onFinish, tick]);
 
   // Dessin
   useEffect(() => {
@@ -198,7 +268,7 @@ function SnakeComponent({ onFinish }: GameProps) {
         padding: isFullscreen ? 24 : 0,
       }}
     >
-      {phase === 'ready' && (
+      {phase === 'ready' && mode === 'local' && (
         <div style={{ display: 'flex', gap: 8, marginBottom: 4 }}>
           <button
             className={`chip ${playerCount === 2 ? 'active accent' : ''}`}
@@ -237,13 +307,27 @@ function SnakeComponent({ onFinish }: GameProps) {
         }}
       />
 
+      {phase === 'ready' && mode !== 'local' && (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+          <div className="eyebrow"><span className="label">Tes contrôles</span></div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button type="button" className={`chip ${myScheme === 'arrows' ? 'active accent' : ''}`} onClick={() => setMyScheme('arrows')}>Flèches ↑↓←→</button>
+            <button type="button" className={`chip ${myScheme === 'zqsd' ? 'active accent' : ''}`} onClick={() => setMyScheme('zqsd')}>ZQSD / WASD</button>
+          </div>
+        </div>
+      )}
       {phase === 'ready' && (
         <>
           <button className="btn btn-accent btn-lg" onClick={start}>Démarrer</button>
           <div style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center', lineHeight: 1.6 }}>
-            {SKINS.slice(0, playerCount).map((sk) => (
-              <div key={sk.label}>{sk.label} : {sk.controls}</div>
-            ))}
+            {mode === 'local'
+              ? SKINS.slice(0, effectivePlayerCount).map((sk) => (
+                  <div key={sk.label}>{sk.label} : {sk.controls}</div>
+                ))
+              : (
+                  <div>Tu pilotes <strong>{mode === 'host' ? '🔴 J1' : '🔵 J2'}</strong> avec {myScheme === 'arrows' ? 'les flèches' : 'ZQSD/WASD'}. Dernier survivant gagne.</div>
+                )}
+            {mode === 'guest' && <div style={{ marginTop: 4, opacity: 0.7 }}>Mode distance — J1 fait tourner la partie.</div>}
           </div>
         </>
       )}
@@ -260,6 +344,31 @@ function SnakeComponent({ onFinish }: GameProps) {
       )}
     </div>
   );
+}
+
+// Helpers pour mode remote : convertit le code clavier en direction canonique
+// selon le schéma préféré du joueur.
+function keyToDir(k: string, scheme: Scheme): DirName | null {
+  if (scheme === 'arrows') {
+    if (k === 'arrowup') return 'up';
+    if (k === 'arrowdown') return 'down';
+    if (k === 'arrowleft') return 'left';
+    if (k === 'arrowright') return 'right';
+  } else {
+    if (k === 'z' || k === 'w') return 'up';
+    if (k === 's') return 'down';
+    if (k === 'q' || k === 'a') return 'left';
+    if (k === 'd') return 'right';
+  }
+  return null;
+}
+function dirNameToVec(d: DirName): Dir {
+  switch (d) {
+    case 'up': return UP;
+    case 'down': return DOWN;
+    case 'left': return LEFT;
+    case 'right': return RIGHT;
+  }
 }
 
 // Mappe une touche à un input directionnel sur l'un des snakes. Retourne true si la touche a été utilisée.
