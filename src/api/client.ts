@@ -90,13 +90,13 @@ export const api = {
         shifumi: { mode: 'irl', winnerPseudo, winnerPick, loserPick, condition: condition?.trim() || undefined },
       }),
     }),
-  createShifumiRemote: (opponentPseudo: string, myPick: ShifumiPick, condition?: string) =>
+  createShifumiRemote: (opponentPseudo: string, myPick: ShifumiPick, condition?: string, bestOf?: 1 | 3 | 5) =>
     call<Match>('/matches', {
       method: 'POST',
       body: JSON.stringify({
         game: 'shifumi',
         opponentPseudo,
-        shifumi: { mode: 'remote', myPick, condition: condition?.trim() || undefined },
+        shifumi: { mode: 'remote', myPick, condition: condition?.trim() || undefined, bestOf },
       }),
     }),
   shifumiPick: (matchId: string, pick: ShifumiPick) =>

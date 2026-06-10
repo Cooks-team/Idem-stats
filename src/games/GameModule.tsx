@@ -18,10 +18,16 @@ export interface GameModule {
 
 import { ClickerGame } from './ClickerGame';
 import { SnakeGame } from './SnakeGame';
+import { PongGame } from './PongGame';
+import { DartsGame } from './DartsGame';
+import { BabyfootGame } from './BabyfootGame';
 
 export const GAME_MODULES: GameModule[] = [
   ClickerGame,
   SnakeGame,
+  PongGame,
+  DartsGame,
+  BabyfootGame,
 ];
 
 export function moduleById(id: string): GameModule | undefined {

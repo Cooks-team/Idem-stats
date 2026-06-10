@@ -10,11 +10,11 @@ export interface KnownGame {
 
 export const KNOWN_GAMES: KnownGame[] = [
   { apiId: 'basket_random', display: 'Basket Random' },
-  { apiId: 'darts',         display: 'Fléchettes' },
-  { apiId: 'baby',          display: 'Babyfoot' },
-  { apiId: 'pingpong',      display: 'Ping-pong' },
+  { apiId: 'darts',         display: 'Fléchettes',   playable: true },
+  { apiId: 'baby',          display: 'Babyfoot',     playable: true },
+  { apiId: 'pingpong',      display: 'Ping-pong',    playable: true },
   { apiId: 'clicker',       display: 'Click Battle', playable: true },
-  { apiId: 'snake',         display: 'Snake 1v1', playable: true },
+  { apiId: 'snake',         display: 'Snake 1v1',    playable: true },
   { apiId: 'shifumi',       display: 'Shifumi' },
 ];
 
