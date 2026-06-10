@@ -82,6 +82,23 @@ export interface Match {
   player2?: User | null;
 }
 
+export type BadgeKind = 'monster' | 'shame' | 'winrate' | 'streak' | 'volume';
+export type BadgeTone = 'accent' | 'win' | 'loss' | 'gold' | 'muted';
+
+export interface Badge {
+  id: string;
+  kind: BadgeKind;
+  label: string;
+  description: string;
+  emoji: string;
+  tone: BadgeTone;
+}
+
+export interface BadgesResponse {
+  user: User;
+  badges: Badge[];
+}
+
 export interface LeaderboardEntry {
   user: User;
   wins: number;
