@@ -2,7 +2,8 @@
 
 type IconName =
   | 'trophy' | 'grid' | 'pulse' | 'user' | 'plus' | 'bolt'
-  | 'chevron' | 'back' | 'close' | 'check' | 'copy' | 'crown';
+  | 'chevron' | 'back' | 'close' | 'check' | 'copy' | 'crown'
+  | 'envelope';
 
 interface Props { name: IconName; size?: number; color?: string; stroke?: number }
 
@@ -33,5 +34,7 @@ export function Icon({ name, size = 22, color = 'currentColor', stroke = 2 }: Pr
       return (<svg {...c}><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 012-2h10"/></svg>);
     case 'crown':
       return (<svg {...c}><path d="M4 8l3.5 3L12 5l4.5 6L20 8l-1.5 10h-13L4 8z"/></svg>);
+    case 'envelope':
+      return (<svg {...c}><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 7 9-7"/></svg>);
   }
 }

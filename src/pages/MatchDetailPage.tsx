@@ -90,6 +90,7 @@ export function MatchDetailPage() {
             score={m.scoreP1}
             editable={m.status === 'active'}
             onPlus={() => bumpP1(+1)}
+            onPlusTwo={m.game === 'basket_random' ? () => bumpP1(+2) : undefined}
             onMinus={() => bumpP1(-1)}
           />
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 60, color: 'var(--muted)' }}>–</div>
@@ -100,12 +101,13 @@ export function MatchDetailPage() {
             score={m.scoreP2}
             editable={m.status === 'active'}
             onPlus={() => bumpP2(+1)}
+            onPlusTwo={m.game === 'basket_random' ? () => bumpP2(+2) : undefined}
             onMinus={() => bumpP2(-1)}
           />
         </div>
         {m.game === 'basket_random' && (
           <div style={{ textAlign: 'center', color: 'var(--muted)', marginTop: 18, fontSize: 13 }}>
-            Basket Random — premier à 5. Mise à jour auto par l'extension, ou saisie manuelle ici.
+            Basket Random — premier à 5 (ou 6 sur une balle double point). Mise à jour auto par l'extension, ou saisie manuelle ici.
           </div>
         )}
       </div>
@@ -126,9 +128,11 @@ export function MatchDetailPage() {
   );
 }
 
-function PlayerSide({ pseudo, tone, score, editable, onPlus, onMinus, avatarUrl }: {
+function PlayerSide({ pseudo, tone, score, editable, onPlus, onPlusTwo, onMinus, avatarUrl }: {
   pseudo: string; tone: string; score: number; editable: boolean;
   onPlus: () => void; onMinus: () => void;
+  // Optionnel : bouton "+2" pour les jeux avec balle double point (basket_random).
+  onPlusTwo?: () => void;
   avatarUrl?: string | null;
 }) {
   return (
@@ -140,9 +144,12 @@ function PlayerSide({ pseudo, tone, score, editable, onPlus, onMinus, avatarUrl 
         fontSize: 136, color: tone, lineHeight: 1,
       }}>{score}</div>
       {editable && (
-        <div style={{ display: 'flex', gap: 10 }}>
+        <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn btn-ghost btn-sm" onClick={onMinus}>−</button>
           <button className="btn btn-accent btn-sm" onClick={onPlus}>+1</button>
+          {onPlusTwo && (
+            <button className="btn btn-accent btn-sm" onClick={onPlusTwo} title="Balle double point">+2</button>
+          )}
         </div>
       )}
     </div>
