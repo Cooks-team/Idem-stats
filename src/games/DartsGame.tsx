@@ -43,6 +43,9 @@ const COLOR_BULLSEYE = '#C8302B';
 
 interface V2 { x: number; y: number }
 interface Hit { score: number; ring: 'bullseye' | 'bull' | 'triple' | 'double' | 'single' | 'miss'; segment: number; x: number; y: number }
+// Popup éphémère qui s'affiche à l'impact pour signaler le score gagné
+// (style Plato : "T20 +60", "×2 16", "+50 BULL", etc.). Self-removed après ~1.4s.
+interface ScorePopup { id: number; x: number; y: number; score: number; ring: Hit['ring']; segment: number }
 
 export const DartsGame: GameModule = {
   id: 'darts',
@@ -60,6 +63,10 @@ function DartsComponent({ onFinish }: GameProps) {
   const [allHits, setAllHits] = useState<Hit[]>([]);
   const [phase, setPhase] = useState<'playing' | 'done'>('playing');
   const [busted, setBusted] = useState(false);
+  // Popups de score affichés au point d'impact. Plusieurs peuvent coexister
+  // (ex : 3 darts d'un même tour rapprochées sur le bull).
+  const [popups, setPopups] = useState<ScorePopup[]>([]);
+  const popupIdRef = useRef(0);
 
   // État de la fléchette en cours de drag / vol
   const [dartPos, setDartPos] = useState<V2>({ x: DART_REST_X, y: DART_REST_Y });
@@ -178,6 +185,11 @@ function DartsComponent({ onFinish }: GameProps) {
     setAllHits((prev) => [...prev, fullHit]);
     setFlying(null);
 
+    // Spawn d'un popup de score façon Plato. Auto-remove après 1.4s.
+    const popupId = ++popupIdRef.current;
+    setPopups((p) => [...p, { id: popupId, x: at.x, y: at.y, score: hit.score, ring: hit.ring, segment: hit.segment }]);
+    setTimeout(() => setPopups((p) => p.filter((x) => x.id !== popupId)), 1400);
+
     const myKey = turn === 1 ? 'p1' : 'p2';
     const currentScore = scores[myKey];
 
@@ -274,6 +286,7 @@ function DartsComponent({ onFinish }: GameProps) {
         dragging={dragging}
         flying={!!flying}
         disabled={!canThrow}
+        popups={popups}
       />
 
       <div style={{ color: 'var(--muted)', fontSize: 12.5, textAlign: 'center', maxWidth: 420, lineHeight: 1.5 }}>
@@ -302,7 +315,7 @@ function PlayerCard({ label, score, active, color }: { label: string; score: num
 }
 
 // ─── Cible SVG + fléchette draggable ──────────────────────────────────────
-function Dartboard({ svgRef, onPointerDown, onPointerMove, onPointerUp, hits, dartPos, dartScale, dragging, flying, disabled }: {
+function Dartboard({ svgRef, onPointerDown, onPointerMove, onPointerUp, hits, dartPos, dartScale, dragging, flying, disabled, popups }: {
   svgRef: React.RefObject<SVGSVGElement>;
   onPointerDown: (e: React.PointerEvent<SVGSVGElement>) => void;
   onPointerMove: (e: React.PointerEvent<SVGSVGElement>) => void;
@@ -313,6 +326,7 @@ function Dartboard({ svgRef, onPointerDown, onPointerMove, onPointerUp, hits, da
   dragging: boolean;
   flying: boolean;
   disabled: boolean;
+  popups: ScorePopup[];
 }) {
   const segments: React.ReactNode[] = [];
   for (let i = 0; i < 20; i++) {
@@ -471,10 +485,107 @@ function Dartboard({ svgRef, onPointerDown, onPointerMove, onPointerUp, hits, da
 
         {/* La fléchette 3D : pointe métal, tige chrome, plumes vert-fluo + ombre */}
         <Dart x={dartPos.x} y={dartPos.y} scale={dartScale} flying={flying} dragging={dragging} />
+
+        {/* Popups de score façon Plato — affichés au-dessus de la dart pour rester lisibles */}
+        {popups.map((p) => <ScorePopupSvg key={p.id} popup={p} />)}
       </svg>
     </div>
   );
 }
+
+// ─── Popup de score animé style Plato ────────────────────────────────────
+// Apparaît à l'impact avec un "pop" (scale 0.4→1.3→1.0), monte de ~0.3
+// unités viewBox et fade out. ~1.2s de vie utile + 0.2s de delay résiduel.
+function ScorePopupSvg({ popup }: { popup: ScorePopup }) {
+  const [t, setT] = useState(0);
+  useEffect(() => {
+    let raf = 0;
+    const start = performance.now();
+    const dur = 1200;
+    const tick = () => {
+      const elapsed = performance.now() - start;
+      setT(Math.min(1, elapsed / dur));
+      if (elapsed < dur) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  // Anim : translateY négatif progressif + scale bounce + fade out fin
+  const yOffset = -0.04 - 0.32 * easeOut(t);
+  const scale =
+    t < 0.18  ? lerp(0.45, 1.35, t / 0.18) :
+    t < 0.30  ? lerp(1.35, 1.05, (t - 0.18) / 0.12) :
+                1.05;
+  const opacity = t < 0.10 ? t / 0.10 : t > 0.65 ? 1 - (t - 0.65) / 0.35 : 1;
+
+  // Layout du texte : double ligne pour les multiplicateurs (×2 / ×3 / BULL),
+  // simple sinon. Couleurs codées par type (or = bullseye, vert = bull/double-vert,
+  // rouge = triple, gris = miss).
+  let mainText: string;
+  let badge: string | null = null;
+  let color: string;
+  let stroke = '#0b0b0e';
+
+  switch (popup.ring) {
+    case 'bullseye':
+      mainText = '+50'; badge = 'BULLSEYE'; color = '#FFD700'; break;
+    case 'bull':
+      mainText = '+25'; badge = 'BULL'; color = '#52e07b'; break;
+    case 'triple':
+      mainText = `+${popup.score}`; badge = `×3   T${popup.segment}`; color = '#ff5246'; break;
+    case 'double':
+      mainText = `+${popup.score}`; badge = `×2   D${popup.segment}`; color = '#3dd68c'; break;
+    case 'miss':
+      mainText = 'MISS'; badge = null; color = '#888'; stroke = '#000'; break;
+    default:
+      mainText = `+${popup.score}`; badge = `S${popup.segment}`; color = '#FFE066'; break;
+  }
+
+  // Position du popup : on commence à l'impact, on monte. On le décale légèrement
+  // pour qu'il ne se superpose pas à la dart plantée.
+  return (
+    <g
+      transform={`translate(${popup.x}, ${popup.y + yOffset}) scale(${scale})`}
+      opacity={opacity}
+      style={{ pointerEvents: 'none' }}
+    >
+      {/* Badge "×3 T20" ou "BULL" au-dessus du gros chiffre */}
+      {badge && (
+        <text
+          x="0" y="-0.12"
+          textAnchor="middle"
+          fontSize="0.07"
+          fontWeight={800}
+          fill={color}
+          stroke={stroke}
+          strokeWidth={0.012}
+          paintOrder="stroke"
+          style={{ fontFamily: 'var(--font-display, sans-serif)', letterSpacing: '0.04em' }}
+        >
+          {badge}
+        </text>
+      )}
+      {/* Gros score */}
+      <text
+        x="0" y="-0.02"
+        textAnchor="middle"
+        fontSize="0.18"
+        fontWeight={900}
+        fill={color}
+        stroke={stroke}
+        strokeWidth={0.018}
+        paintOrder="stroke"
+        style={{ fontFamily: 'var(--font-display, sans-serif)' }}
+      >
+        {mainText}
+      </text>
+    </g>
+  );
+}
+
+function lerp(a: number, b: number, t: number) { return a + (b - a) * t; }
+function easeOut(t: number) { return 1 - Math.pow(1 - t, 3); }
 
 // Fléchette 3D : pointe chrome + tige métallique + plumes en V avec dégradé.
 // On la dessine centrée sur (0,0) à taille 1 puis on applique translate+scale
