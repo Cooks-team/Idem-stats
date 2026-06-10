@@ -421,19 +421,15 @@ export function syncMeshes(state: { karts: KartState[]; itemBoxes: ItemBox[]; ac
 export function followKart(cam: THREE.PerspectiveCamera, kart: KartState, fpsMode: boolean, _dt: number, _snap = false) {
   const c = Math.cos(kart.heading);
   const s = Math.sin(kart.heading);
-  // Force l'up vector — three.js l'utilise dans lookAt() pour orienter
-  // correctement, et une dérive numérique ou un set manuel ailleurs peut
-  // l'avoir cassé.
   cam.up.set(0, 1, 0);
   if (fpsMode) {
-    // Cockpit : 0.4u en avant du kart, hauteur tête.
     cam.position.set(kart.x + c * 0.4, 1.6, kart.z + s * 0.4);
     cam.lookAt(kart.x + c * 6, 1.5, kart.z + s * 6);
   } else {
-    // 3e personne : 9u derrière + 6u plus haut. lookAt direct sur le kart →
-    // celui-ci est PILE au centre de l'écran, dans tous les virages.
-    cam.position.set(kart.x - c * 9, 6, kart.z - s * 9);
-    cam.lookAt(kart.x, 0.9, kart.z);
+    // 3e personne dézoomée (15u derrière, 9u en hauteur, lookAt 2u au-dessus
+    // du kart pour voir la route devant sans pousser le kart en bas d'écran).
+    cam.position.set(kart.x - c * 15, 9, kart.z - s * 15);
+    cam.lookAt(kart.x, 1.5, kart.z);
   }
 }
 
