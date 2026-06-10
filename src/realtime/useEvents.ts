@@ -26,6 +26,10 @@ export function useEvents(enabled: boolean) {
       if (type.startsWith('friend.')) {
         qc.invalidateQueries({ queryKey: ['friends'] });
       }
+      if (type.startsWith('message.')) {
+        qc.invalidateQueries({ queryKey: ['conversations'] });
+        qc.invalidateQueries({ queryKey: ['messages'] });
+      }
       if (type.startsWith('match.') || type.startsWith('shifumi.')) {
         qc.invalidateQueries({ queryKey: ['matches'] });
         qc.invalidateQueries({ queryKey: ['history'] });
@@ -40,7 +44,7 @@ export function useEvents(enabled: boolean) {
     const onMessage = (e: MessageEvent) => handle('message', tryParse(e.data));
     es.addEventListener('message', onMessage);
 
-    const named = ['friend.request', 'friend.accepted', 'match.invite', 'match.update', 'shifumi.challenge', 'shifumi.resolved'];
+    const named = ['friend.request', 'friend.accepted', 'match.invite', 'match.update', 'shifumi.challenge', 'message.new', 'shifumi.resolved'];
     const listeners = named.map((t) => {
       const fn = (e: MessageEvent) => handle(t, tryParse(e.data));
       es.addEventListener(t, fn as EventListener);

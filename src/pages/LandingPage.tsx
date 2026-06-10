@@ -54,11 +54,10 @@ export function LandingPage() {
           </Card>
           <Card emoji="🎯" title="2. Joue, marque, gagne">
             Sur le même écran ou chacun chez soi. Le score se saisit à la
-            main, sauf pour Basket Random qui se détecte automatiquement
-            via notre extension Chrome.
+            main.
           </Card>
           <Card emoji="🏆" title="3. Le PODIUM se met à jour">
-            Le PODIUM est trié par nombre de victoires. Top 3 sur le
+            Le PODIUM est trié par ELO. Top 3 sur le
             podium, le reste en dessous. Filtrable par jeu.
           </Card>
         </div>
@@ -67,12 +66,12 @@ export function LandingPage() {
       <section className="landing-section">
         <div className="eyebrow"><span className="label">Les jeux supportés</span></div>
         <div className="landing-games">
-          <GameRow emoji="🏀" name="Basket Random" rule="Premier à 5. Détection auto via l'extension Chrome." />
-          <GameRow emoji="🎯" name="Fléchettes" rule="501 → 0, score saisi à la main au détail du match." />
-          <GameRow emoji="⚽" name="Babyfoot" rule="10 buts. Score saisi à la main." />
-          <GameRow emoji="🏓" name="Ping-pong" rule="11 pts auto-fin, ou 21 en mode long." />
-          <GameRow emoji="🖱️" name="Click Battle" rule="10 secondes pour cliquer le plus vite. Jouable direct dans l'app." />
-          <GameRow emoji="🪨" name="Shifumi" rule="Pierre / Feuille / Ciseaux. En IRL (résultat saisi) ou Distance (countdown SHI-FU-MI animé). Tu peux y mettre un enjeu : 'celui qui perd paye'." />
+          <GameRow emoji="🏀" name="Basket Random" rule="Premier à 5. Se joue sur le même appareil." />
+          <GameRow emoji="🎯" name="Fléchettes" rule="501 → 0, jouer sur mobile pour une meilleure expérience." />
+          <GameRow emoji="⚽" name="Babyfoot" rule="5 buts. Score saisi automatiquement." />
+          <GameRow emoji="🏓" name="Pong" rule="10 pts auto-fin." />
+          <GameRow emoji="🖱️" name="Click Battle" rule="10 secondes pour cliquer le plus vite. Jouable sur deux écrans." />
+          <GameRow emoji="🪨" name="Shifumi" rule="Pierre / Feuille / Ciseaux. En IRL ou Distance. Tu peux y mettre un enjeu : 'celui qui perd paye'." />
         </div>
       </section>
 
@@ -82,13 +81,12 @@ export function LandingPage() {
           <li><strong>Pas de revanche imposée.</strong> Une partie = un résultat enregistré.</li>
           <li><strong>Le créateur saisit le score.</strong> En cas de doute, on rejoue.</li>
           <li><strong>Le tricheur est connu.</strong> L'historique reste, le PODIUM se souvient.</li>
-          <li><strong>Le shifumi distance triche pas.</strong> Les picks sont commités côté serveur avant le reveal — impossible de voir l'autre choix avant le sien.</li>
         </ul>
       </section>
 
       <footer className="landing-footer">
         <Wordmark />
-        <span className="muted">Built for friends, not for stats nerds.</span>
+        <span className="muted">Construit par Jayson Leducq et Julien Michaux.</span>
       </footer>
     </div>
   );

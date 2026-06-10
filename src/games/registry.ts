@@ -12,13 +12,19 @@ export const KNOWN_GAMES: KnownGame[] = [
   { apiId: 'basket_random', display: 'Basket Random' },
   { apiId: 'darts',         display: 'Fléchettes',   playable: true },
   { apiId: 'baby',          display: 'Babyfoot',     playable: true },
-  { apiId: 'pingpong',      display: 'Ping-pong',    playable: true },
+  { apiId: 'pong',          display: 'Pong',         playable: true },
   { apiId: 'clicker',       display: 'Click Battle', playable: true },
-  { apiId: 'snake',         display: 'Snake 1v1',    playable: true },
+  { apiId: 'snake',         display: 'Snake',        playable: true },
   { apiId: 'billiards',     display: 'Billard',      playable: true },
   { apiId: 'shifumi',       display: 'Shifumi' },
 ];
 
+// Alias d'affichage pour les anciens apiId qui ont été renommés. Permet de
+// continuer à afficher correctement le nom des matchs en BDD avec l'ancien id.
+const APIID_ALIASES: Record<string, string> = {
+  pingpong: 'Pong',
+};
+
 export function displayGame(apiId: string): string {
-  return KNOWN_GAMES.find((g) => g.apiId === apiId)?.display ?? apiId;
+  return KNOWN_GAMES.find((g) => g.apiId === apiId)?.display ?? APIID_ALIASES[apiId] ?? apiId;
 }

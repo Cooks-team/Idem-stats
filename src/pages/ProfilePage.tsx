@@ -15,6 +15,7 @@ export function ProfilePage() {
   const [params] = useSearchParams();
   const requested = params.get('pseudo');
   const target = requested ?? user?.pseudo;
+  const [visibleCount, setVisibleCount] = useState(5);
 
   const { data: entries = [] } = useQuery({
     queryKey: ['leaderboard', 'all'],
@@ -123,12 +124,27 @@ export function ProfilePage() {
           <div className="panel" style={{ color: 'var(--muted)', textAlign: 'center' }}>Aucun duel pour l'instant.</div>
         ) : (
           <div className="panel" style={{ padding: 6 }}>
-            {history.filter((m) => m.status === 'finished').slice(0, 30).map((m) => (
-              <HistoryRow key={m.id} match={m} viewedPseudo={target ?? ''} onPlayer={(p) => nav(`/profile?pseudo=${encodeURIComponent(p)}`)} onOpen={() => nav(`/matches/${m.id}`)} />
-            ))}
-            {history.filter((m) => m.status === 'finished').length === 0 && (
+            {(() => {
+            const finished = history.filter((m) => m.status === 'finished');
+            return finished.length === 0 ? (
               <div style={{ padding: 16, textAlign: 'center', color: 'var(--muted)' }}>Pas encore de duel terminé.</div>
-            )}
+            ) : (
+              <div className="panel" style={{ padding: 6 }}>
+                {finished.slice(0, visibleCount).map((m) => (
+                  <HistoryRow key={m.id} match={m} viewedPseudo={target ?? ''} onPlayer={(p) => nav(`/profile?pseudo=${encodeURIComponent(p)}`)} onOpen={() => nav(`/matches/${m.id}`)} />
+                ))}
+                {visibleCount < finished.length && (
+                  <button
+                    className="btn btn-line btn-sm"
+                    style={{ display: 'block', margin: '10px auto 4px' }}
+                    onClick={() => setVisibleCount((v) => v + 15)}
+                  >
+                    Voir plus ({Math.min(15, finished.length - visibleCount)} de plus)
+                  </button>
+                )}
+              </div>
+            );
+          })()}
           </div>
         )}
       </div>
@@ -347,11 +363,11 @@ function BadgeChip({ badge }: { badge: Badge }) {
 function badgeTonePalette(tone: Badge['tone']): { bg: string; border: string; fg: string } {
   switch (tone) {
     case 'accent': return { bg: 'color-mix(in oklab, var(--accent) 18%, var(--surface))', border: 'var(--accent)', fg: 'var(--text)' };
-    case 'win':    return { bg: 'color-mix(in oklab, var(--win) 18%, var(--surface))',    border: 'var(--win)',    fg: 'var(--text)' };
-    case 'loss':   return { bg: 'color-mix(in oklab, var(--loss) 18%, var(--surface))',   border: 'var(--loss)',   fg: 'var(--text)' };
-    case 'gold':   return { bg: 'color-mix(in oklab, #f5c542 20%, var(--surface))',       border: '#f5c542',       fg: 'var(--text)' };
+    case 'win': return { bg: 'color-mix(in oklab, var(--win) 18%, var(--surface))', border: 'var(--win)', fg: 'var(--text)' };
+    case 'loss': return { bg: 'color-mix(in oklab, var(--loss) 18%, var(--surface))', border: 'var(--loss)', fg: 'var(--text)' };
+    case 'gold': return { bg: 'color-mix(in oklab, #f5c542 20%, var(--surface))', border: '#f5c542', fg: 'var(--text)' };
     case 'muted':
-    default:       return { bg: 'var(--surface)',                                          border: 'var(--line)',   fg: 'var(--muted)' };
+    default: return { bg: 'var(--surface)', border: 'var(--line)', fg: 'var(--muted)' };
   }
 }
 

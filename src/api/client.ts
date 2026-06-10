@@ -1,5 +1,5 @@
 // Mince wrapper fetch : ajoute Bearer si dispo, sérialise JSON, jette une ApiError typée.
-import type { AuthResponse, BadgesResponse, BlackjackRoundResponse, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, ShifumiPick, User, WallOfShameResponse } from './types';
+import type { AuthResponse, BadgesResponse, BlackjackRoundResponse, ConversationSummary, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, Message, ShifumiPick, User, WallOfShameResponse } from './types';
 
 const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 export const API_BASE_URL = BASE;
@@ -62,6 +62,12 @@ export const api = {
   me: () => call<User>('/me'),
   updateMe: (patch: { pseudo?: string }) =>
     call<User>('/me', { method: 'PATCH', body: JSON.stringify(patch) }),
+  listConversations: () => call<ConversationSummary[]>('/messages/conversations'),
+  getMessages: (friendId: string) => call<Message[]>(`/messages/${friendId}`),
+  sendMessage: (friendId: string, body: string) =>
+    call<Message>(`/messages/${friendId}`, { method: 'POST', body: JSON.stringify({ body }) }),
+  markMessagesRead: (friendId: string) =>
+    call<{ ok: true }>(`/messages/${friendId}/read`, { method: 'POST' }),
 
   // Multipart : un FormData avec une seule entrée "file" (cf. multer côté API).
   uploadAvatar: (file: File) => {

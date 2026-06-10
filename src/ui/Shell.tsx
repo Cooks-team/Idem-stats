@@ -28,12 +28,13 @@ export function Shell({ title, subtitle, children, onBack, action }: {
   // Ferme le drawer à chaque changement de route
   useEffect(() => { setDrawerOpen(false); }, [loc.pathname]);
 
-  const items: Array<{ to: string; icon: 'trophy' | 'grid' | 'pulse' | 'user' | 'bolt'; label: string; end?: boolean }> = [
+  const items: Array<{ to: string; icon: 'trophy' | 'grid' | 'pulse' | 'user' | 'users' | 'chat' | 'bolt'; label: string; end?: boolean }> = [
     { to: '/', icon: 'trophy', label: 'Classement', end: true },
     { to: '/games', icon: 'grid', label: 'Jeux' },
     { to: '/blackjack', icon: 'bolt', label: 'Casino 🪙' },
     { to: '/matches', icon: 'pulse', label: 'Activité' },
-    { to: '/friends', icon: 'user', label: 'Amis' },
+    { to: '/friends', icon: 'users', label: 'Amis' },
+    { to: '/messages', icon: 'chat', label: 'Messages' },
     { to: '/profile', icon: 'user', label: 'Profil' },
   ];
 
