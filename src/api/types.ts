@@ -124,12 +124,30 @@ export interface WallOfShameResponse {
   totalEvents: number;
 }
 
+export interface RankTier {
+  name: string;
+  color: string;
+  emoji: string;
+  min: number;
+  nextMin: number | null;
+}
+
+export interface PerGameEloEntry {
+  rating: number;
+  games: number;
+  rank: RankTier;
+}
+
 export interface LeaderboardEntry {
   user: User;
   wins: number;
   losses: number;
   played: number;
   winrate: number; // 0..1
+  elo: number;
+  rank: RankTier;
+  // Détail des ELO par jeu (utile au profil pour montrer le rang dans chaque jeu)
+  perGameElo: Record<string, PerGameEloEntry>;
 }
 
 export interface AuthResponse {
