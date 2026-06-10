@@ -9,7 +9,7 @@ import { spawnItemBoxes, pickupItemBoxes, stepActiveItems, useItem as triggerIte
 import { botSkillFor, getBotInput } from './ai';
 import { buildScene, followKart, syncMeshes, syncEmotes, KART_COLORS } from './scene';
 import { useRemoteGameSync } from '../../realtime/useRemoteGameSync';
-import { EMOTES } from './emotes';
+import { EMOTES } from '../../lib/emotes';
 
 // 3D kart racer. 4 karts toujours en course. Modes :
 //  - local-1p (solo)   : P1 humain (flèches ou ZQSD) + 3 bots

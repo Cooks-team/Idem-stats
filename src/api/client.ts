@@ -169,4 +169,8 @@ export const api = {
     call<{ ok: true }>(`/matches/${matchId}/play/input`, { method: 'POST', body: JSON.stringify({ payload }) }),
   sendPlayState: (matchId: string, payload: unknown) =>
     call<{ ok: true }>(`/matches/${matchId}/play/state`, { method: 'POST', body: JSON.stringify({ payload }) }),
+
+  // Emote relay — déclenche un emote chez l'adversaire pendant un match remote.
+  sendEmote: (matchId: string, key: string) =>
+    call<{ ok: true }>(`/matches/${matchId}/emote`, { method: 'POST', body: JSON.stringify({ key }) }),
 };

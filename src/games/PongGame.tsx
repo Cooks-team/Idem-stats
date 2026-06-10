@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
 import { useRemoteGameSync } from '../realtime/useRemoteGameSync';
+import { useEmotePair } from '../realtime/useEmotePair';
+import { EmoteBubble } from '../ui/EmoteBubble';
+import { EmotePicker } from '../ui/EmotePicker';
 
 // Pong classique 1v1 sur le même écran. Premier à 10 gagne.
-//   J1 (rouge, gauche)  : ↑ ↓
-//   J2 (bleu,  droite)  : Z (ou W) / S
+//   J1 (rouge, droite)  : ↑ ↓
+//   J2 (bleu,  gauche)  : Z (ou W) / S
 // Physique simple : la balle accélère un peu à chaque rebond sur une raquette,
 // avec un angle qui dépend de l'endroit où elle frappe (centre = horizontal,
 // bord = angle prononcé).
@@ -308,11 +311,30 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
     return () => cancelAnimationFrame(raf);
   }, [phase, mode]);
 
+  // Emotes 1v1 — picker (= mon emote) + bulles à côté des pseudos selon
+  // qui je suis. En local, je suis P1 (rouge, droite) ; mes bulles tombent à
+  // droite. En guest, je suis P2 (bleu, gauche) ; mes bulles tombent à gauche.
+  const emotes = useEmotePair({ matchId, mode });
+  const leftBubbleKey  = mode === 'guest' ? emotes.myKey : emotes.opponentKey;
+  const rightBubbleKey = mode === 'guest' ? emotes.opponentKey : emotes.myKey;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14 }}>
-      <div style={{ display: 'flex', gap: 60, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 32 }}>
-        <span style={{ color: '#FF6B57' }}>🔴 {score.p1}</span>
-        <span style={{ color: '#5B8CFF' }}>🔵 {score.p2}</span>
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, position: 'relative' }}>
+      {/* Scoreboard aligné sur la position des paddles : 🔵 J2 à gauche,
+          🔴 J1 à droite (l'ancien ordre était inversé → bug d'orientation
+          remonté en playtest). */}
+      <div style={{ display: 'flex', gap: 60, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 32, alignItems: 'center' }}>
+        <span style={{ color: '#5B8CFF', display: 'inline-flex', alignItems: 'center' }}>
+          🔵 {score.p2}
+          <EmoteBubble emoteKey={leftBubbleKey} side="right" />
+        </span>
+        <span style={{ color: '#FF6B57', display: 'inline-flex', alignItems: 'center' }}>
+          <EmoteBubble emoteKey={rightBubbleKey} side="left" />
+          🔴 {score.p1}
+        </span>
+      </div>
+      <div style={{ position: 'absolute', top: 6, right: 6, zIndex: 5 }}>
+        <EmotePicker onPick={emotes.triggerMine} label="Emotes (envoyé à l'adversaire en mode distance)" />
       </div>
       <canvas
         ref={canvasRef}

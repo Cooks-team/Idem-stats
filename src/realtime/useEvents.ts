@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { API_BASE_URL, readPersistedToken } from '../api/client';
 import { playEmitter } from './playEvents';
+import { emoteEmitter } from './emoteEvents';
 
 // EventSource sur /events?token=<JWT>. Reconnexion auto en cas de coupure
 // (gérée nativement par EventSource via le header "retry"). Sur chaque event
@@ -65,11 +66,22 @@ export function useEvents(enabled: boolean) {
     es.addEventListener('match.play.input', playInputFn as EventListener);
     es.addEventListener('match.play.state', playStateFn as EventListener);
 
+    // Emote d'adversaire : relay simple via emoteEmitter — pas d'invalidation
+    // TanStack à faire (l'affichage est local et éphémère).
+    const emoteFn = (ev: MessageEvent) => {
+      const data = tryParse(ev.data) as { matchId?: string; from?: string; key?: string } | null;
+      if (data?.matchId && data.from && data.key) {
+        emoteEmitter.emit({ matchId: data.matchId, from: data.from, key: data.key });
+      }
+    };
+    es.addEventListener('match.emote', emoteFn as EventListener);
+
     return () => {
       es.removeEventListener('message', onMessage);
       listeners.forEach(([t, fn]) => es.removeEventListener(t, fn as EventListener));
       es.removeEventListener('match.play.input', playInputFn as EventListener);
       es.removeEventListener('match.play.state', playStateFn as EventListener);
+      es.removeEventListener('match.emote', emoteFn as EventListener);
       es.close();
     };
   }, [enabled, qc]);

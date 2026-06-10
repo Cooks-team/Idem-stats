@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
 import { useRemoteGameSync } from '../realtime/useRemoteGameSync';
+import { useEmotePair } from '../realtime/useEmotePair';
+import { EmoteBubble } from '../ui/EmoteBubble';
+import { EmotePicker } from '../ui/EmotePicker';
 
 // Snake local multi-joueurs : 2 ou 4 sur le même écran/clavier.
 // Schéma de contrôle :
@@ -109,6 +112,7 @@ interface SnakeInputMsg {
 }
 
 function SnakeComponent({ onFinish, mode = 'local', matchId }: GameProps) {
+  const emotes = useEmotePair({ matchId, mode });
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [phase, setPhase] = useState<'ready' | 'running' | 'done'>('ready');
@@ -306,6 +310,7 @@ function SnakeComponent({ onFinish, mode = 'local', matchId }: GameProps) {
     <div
       ref={wrapperRef}
       style={{
+        position: 'relative',
         display: 'flex', flexDirection: 'column', alignItems: 'center',
         justifyContent: isFullscreen ? 'center' : 'flex-start',
         gap: 14,
@@ -330,13 +335,25 @@ function SnakeComponent({ onFinish, mode = 'local', matchId }: GameProps) {
         </div>
       )}
 
-      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', justifyContent: 'center', fontFamily: 'var(--font-display)', fontWeight: 700 }}>
-        {stateRef.current.snakes.map((sn) => (
-          <span key={sn.id} style={{ color: SKINS[sn.id].fill, fontSize: 20, opacity: sn.alive ? 1 : 0.4 }}>
-            {SKINS[sn.id].label} — {sn.body.length}
-            {!sn.alive && ' 💀'}
-          </span>
-        ))}
+      <div style={{ position: 'absolute', top: isFullscreen ? 16 : 0, right: isFullscreen ? 16 : 0, zIndex: 5 }}>
+        <EmotePicker onPick={emotes.triggerMine} label="Emotes" />
+      </div>
+      <div style={{ display: 'flex', gap: 18, flexWrap: 'wrap', justifyContent: 'center', fontFamily: 'var(--font-display)', fontWeight: 700, alignItems: 'center' }}>
+        {stateRef.current.snakes.map((sn) => {
+          // Le snake "moi" reçoit la bulle d'emote à côté de son label. En local
+          // c'est J1 (snake 0). En guest, c'est J2 (snake 1).
+          const mySnakeId = mode === 'guest' ? 1 : 0;
+          const isMe = sn.id === mySnakeId;
+          const isOpponent = sn.id === (mySnakeId === 0 ? 1 : 0);
+          return (
+            <span key={sn.id} style={{ color: SKINS[sn.id].fill, fontSize: 20, opacity: sn.alive ? 1 : 0.4, display: 'inline-flex', alignItems: 'center' }}>
+              {SKINS[sn.id].label} — {sn.body.length}
+              {!sn.alive && ' 💀'}
+              {isMe && <EmoteBubble emoteKey={emotes.myKey} side="right" />}
+              {isOpponent && <EmoteBubble emoteKey={emotes.opponentKey} side="right" />}
+            </span>
+          );
+        })}
       </div>
 
       <canvas
