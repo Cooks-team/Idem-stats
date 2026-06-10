@@ -15,6 +15,7 @@ export function MatchDetailPage() {
   const { id = '' } = useParams();
   const nav = useNavigate();
   const qc = useQueryClient();
+  const { user } = useAuth();
 
   const { data: m } = useQuery({
     queryKey: ['match', id],
@@ -55,6 +56,8 @@ export function MatchDetailPage() {
   // (i.e. on est arrivé sur un match pending/active et il vient de se terminer),
   // on file sur le classement 2s plus tard. Si on arrive sur un match déjà fini
   // (consultation d'historique), on ne redirige pas.
+  // Pour 'cancelled', on file sur / 3.5s plus tard — laisse le temps au panneau
+  // "X a refusé ton invitation" d'être lu.
   const arrivedStatusRef = useRef<string | null>(null);
   useEffect(() => {
     if (!m) return;
@@ -63,9 +66,48 @@ export function MatchDetailPage() {
       const t = window.setTimeout(() => nav('/', { replace: true }), 2_000);
       return () => clearTimeout(t);
     }
+    if (m.status === 'cancelled' && arrivedStatusRef.current !== 'cancelled') {
+      const t = window.setTimeout(() => nav('/', { replace: true }), 3_500);
+      return () => clearTimeout(t);
+    }
   }, [m?.status, nav]);
 
   if (!m) return <Shell title="Match" onBack={() => nav(-1)}>…</Shell>;
+
+  // Match annulé (refus d'invitation ou annulation explicite) : on affiche un
+  // panneau dédié plutôt que de tomber sur le scoreboard par défaut, qui
+  // donnait l'impression au créateur d'être "envoyé dans la room" pour rien.
+  if (m.status === 'cancelled') {
+    const iAmCreator = m.player1Id === user?.id;
+    const opponentName = iAmCreator ? (m.player2?.pseudo ?? "Ton adversaire") : (m.player1?.pseudo ?? "L'adversaire");
+    // Distingue refus d'invitation (metadata.invite était true) vs annulation
+    // active. Simplification : si je suis le créateur et l'autre est dans
+    // m.player2, on suppose "il a refusé". Sinon "match annulé".
+    // (Pas accès direct à invite=true dans le state actuel — l'API met
+    //  invite=false après decline, donc on prend un message générique.)
+    const headline = iAmCreator
+      ? `${opponentName} a refusé ton invitation 😔`
+      : `Match annulé`;
+    return (
+      <Shell title={displayGame(m.game)} onBack={() => nav('/')} action={<StatusBadge status={m.status} />}>
+        <div className="panel" style={{ textAlign: 'center', padding: 50 }}>
+          <div style={{ fontSize: 72 }}>🚫</div>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 26, marginTop: 8 }}>
+            {headline}
+          </div>
+          <p style={{ color: 'var(--muted)', marginTop: 8 }}>
+            Pas de soucis, propose-lui un autre duel ou cherche un autre adversaire.
+          </p>
+          <p style={{ color: 'var(--muted)', fontSize: 12, marginTop: 12 }}>
+            Retour au classement dans quelques secondes…
+          </p>
+          <button className="btn btn-accent" style={{ marginTop: 16 }} onClick={() => nav('/', { replace: true })}>
+            Retour au classement
+          </button>
+        </div>
+      </Shell>
+    );
+  }
 
   const bumpP1 = (d: number) => patchMut.mutate({ p1: Math.max(0, m.scoreP1 + d), p2: m.scoreP2 });
   const bumpP2 = (d: number) => patchMut.mutate({ p1: m.scoreP1, p2: Math.max(0, m.scoreP2 + d) });

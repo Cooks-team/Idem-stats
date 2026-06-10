@@ -17,13 +17,17 @@ import { useRemoteGameSync } from '../realtime/useRemoteGameSync';
 const W = 800;
 const H = 420;
 const PADDLE_R = 24;
-const GK_R = 18;
+const GK_R = 14;             // nerf : 18 → 14 (gardien plus petit)
 const BALL_R = 12;
 const GOAL_H = 140;
 const WIN_GOALS = 5;
 const PADDLE_SPEED = 5.5;
 const PADDLE_BOOST_SPEED = 8.5;
-const GK_SPEED = 2.6;
+const GK_SPEED = 1.6;        // nerf : 2.6 → 1.6 (réactions plus molles)
+// Le gardien ne réagit que si la balle est proche de SON but. Au-delà de
+// cette distance, il rentre tranquillement au centre. Évite qu'il colle
+// la balle dès qu'elle franchit la médiane.
+const GK_REACT_RANGE = 220;  // px depuis la ligne de but
 const BALL_FRICTION = 0.998;
 const MIN_BALL_SPEED = 0.05;
 const TICK_MS = 16;
@@ -420,21 +424,31 @@ function stepGame(s: State, mode: 'local' | 'host' | 'guest') {
   s.p1V = { x: s.p1.x - prevP1.x, y: s.p1.y - prevP1.y };
   s.p2V = { x: s.p2.x - prevP2.x, y: s.p2.y - prevP2.y };
 
-  // 2) Gardiens auto
+  // 2) Gardiens auto — nerfés : ne réagissent que si la balle est dans leur
+  //    zone de réaction (les GK_REACT_RANGE px devant leur but). Au-delà,
+  //    ils retournent tranquillement au centre du but. Combiné avec
+  //    GK_SPEED 1.6 (vs 2.6 avant), il devient possible de tirer en lob /
+  //    angle prononcé / boost paddle sans qu'ils colmatent tout.
   const goalYMin = (H - GOAL_H) / 2 + GK_R;
   const goalYMax = (H + GOAL_H) / 2 - GK_R;
-  if (s.ball.x > W / 2) {
+  const distGk1 = W - s.ball.x;   // distance balle → but de droite (J1 défend)
+  const distGk2 = s.ball.x;       // distance balle → but de gauche (J2 défend)
+
+  // GK1 (J1, droite) : actif si balle dans les GK_REACT_RANGE px à sa droite
+  if (distGk1 < GK_REACT_RANGE) {
     const dy = clamp(s.ball.y - s.gk1.y, -GK_SPEED, GK_SPEED);
     s.gk1.y = clamp(s.gk1.y + dy, goalYMin, goalYMax);
   } else {
-    const dy = clamp(H / 2 - s.gk1.y, -GK_SPEED, GK_SPEED);
+    const dy = clamp(H / 2 - s.gk1.y, -GK_SPEED * 0.6, GK_SPEED * 0.6);
     s.gk1.y = clamp(s.gk1.y + dy, goalYMin, goalYMax);
   }
-  if (s.ball.x < W / 2) {
+
+  // GK2 (J2, gauche) : symétrique
+  if (distGk2 < GK_REACT_RANGE) {
     const dy = clamp(s.ball.y - s.gk2.y, -GK_SPEED, GK_SPEED);
     s.gk2.y = clamp(s.gk2.y + dy, goalYMin, goalYMax);
   } else {
-    const dy = clamp(H / 2 - s.gk2.y, -GK_SPEED, GK_SPEED);
+    const dy = clamp(H / 2 - s.gk2.y, -GK_SPEED * 0.6, GK_SPEED * 0.6);
     s.gk2.y = clamp(s.gk2.y + dy, goalYMin, goalYMax);
   }
 
