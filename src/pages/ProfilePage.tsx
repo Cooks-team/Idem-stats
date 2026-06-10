@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { absoluteAvatar, api } from '../api/client';
-import type { Match, ShifumiMetadata } from '../api/types';
+import type { Badge, Match, ShifumiMetadata } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { Shell } from '../ui/Shell';
 import { Avatar } from '../ui/Avatar';
@@ -35,6 +35,14 @@ export function ProfilePage() {
     enabled: !!target,
   });
 
+  // Badges du user affiché (Monster, Pue sa mère, Sniper, streak, etc.)
+  const { data: badgesData } = useQuery({
+    queryKey: ['badges', target ?? ''],
+    queryFn: () => target ? api.badges(target) : Promise.resolve({ user: { id: '', pseudo: '' }, badges: [] }),
+    enabled: !!target,
+  });
+  const badges = badgesData?.badges ?? [];
+
   return (
     <Shell title={isMe ? 'Mon profil' : `Profil — ${target}`} onBack={requested ? () => nav(-1) : undefined}>
       <div style={{ display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -58,6 +66,16 @@ export function ProfilePage() {
         <Stat label="Parties" value={entry?.played ?? 0} color="var(--text)" />
         <Stat label="Winrate" value={entry ? `${Math.round(entry.winrate * 100)}%` : '—'} color="var(--accent)" />
       </div>
+
+      {/* Badges décernés */}
+      {badges.length > 0 && (
+        <div style={{ marginTop: 32 }}>
+          <div className="eyebrow"><span className="label">Badges</span></div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            {badges.map((b) => <BadgeChip key={b.id} badge={b} />)}
+          </div>
+        </div>
+      )}
 
       {/* Historique des duels */}
       <div style={{ marginTop: 32 }}>
@@ -266,6 +284,38 @@ function AvatarUpload({ onChange, hasAvatar }: { onChange: (u: import('../api/ty
       {error && <span style={{ color: 'var(--loss)', fontSize: 12 }}>{error}</span>}
     </div>
   );
+}
+
+// Chip d'un badge. Couleurs via le `tone` : accent (jaune), win (vert), loss (rouge),
+// gold (doré), muted (gris). Tooltip natif sur la description.
+function BadgeChip({ badge }: { badge: Badge }) {
+  const palette = badgeTonePalette(badge.tone);
+  return (
+    <div
+      title={badge.description}
+      style={{
+        display: 'inline-flex', alignItems: 'center', gap: 8,
+        padding: '8px 12px', borderRadius: 999,
+        background: palette.bg, border: `1px solid ${palette.border}`,
+        color: palette.fg, fontSize: 13, fontWeight: 600, fontFamily: 'var(--font-body)',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      <span aria-hidden style={{ fontSize: 16, lineHeight: 1 }}>{badge.emoji}</span>
+      <span>{badge.label}</span>
+    </div>
+  );
+}
+
+function badgeTonePalette(tone: Badge['tone']): { bg: string; border: string; fg: string } {
+  switch (tone) {
+    case 'accent': return { bg: 'color-mix(in oklab, var(--accent) 18%, var(--surface))', border: 'var(--accent)', fg: 'var(--text)' };
+    case 'win':    return { bg: 'color-mix(in oklab, var(--win) 18%, var(--surface))',    border: 'var(--win)',    fg: 'var(--text)' };
+    case 'loss':   return { bg: 'color-mix(in oklab, var(--loss) 18%, var(--surface))',   border: 'var(--loss)',   fg: 'var(--text)' };
+    case 'gold':   return { bg: 'color-mix(in oklab, #f5c542 20%, var(--surface))',       border: '#f5c542',       fg: 'var(--text)' };
+    case 'muted':
+    default:       return { bg: 'var(--surface)',                                          border: 'var(--line)',   fg: 'var(--muted)' };
+  }
 }
 
 function Stat({ label, value, color }: { label: string; value: number | string; color: string }) {

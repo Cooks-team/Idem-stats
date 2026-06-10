@@ -27,6 +27,9 @@ export function useEvents(enabled: boolean) {
       }
       if (type.startsWith('match.') || type.startsWith('shifumi.')) {
         qc.invalidateQueries({ queryKey: ['matches'] });
+        qc.invalidateQueries({ queryKey: ['history'] });
+        qc.invalidateQueries({ queryKey: ['leaderboard'] });
+        qc.invalidateQueries({ queryKey: ['badges'] });
         // Si le payload contient un match avec id, on met aussi à jour son cache détail
         const id = (data as { id?: string } | null)?.id;
         if (id) qc.invalidateQueries({ queryKey: ['match', id] });

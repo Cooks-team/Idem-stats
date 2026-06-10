@@ -1,5 +1,5 @@
 // Mince wrapper fetch : ajoute Bearer si dispo, sérialise JSON, jette une ApiError typée.
-import type { AuthResponse, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, ShifumiPick, User } from './types';
+import type { AuthResponse, BadgesResponse, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, ShifumiPick, User } from './types';
 
 const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 export const API_BASE_URL = BASE;
@@ -120,4 +120,7 @@ export const api = {
 
   leaderboard: (game?: string) =>
     call<LeaderboardEntry[]>(`/leaderboard${game ? `?game=${encodeURIComponent(game)}` : ''}`),
+
+  // Badges décernés à un user (Monster/Pue sa mère/Sniper/streak/volume)
+  badges: (pseudo: string) => call<BadgesResponse>(`/badges/${encodeURIComponent(pseudo)}`),
 };
