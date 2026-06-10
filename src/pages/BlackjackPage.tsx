@@ -285,7 +285,7 @@ export function BlackjackPage() {
   })), [user]);
 
   return (
-    <Shell title="🎰 Blackjack" onBack={() => nav(-1)} action={<CoinsBadge coins={coins} />}>
+    <Shell title="🎰 Blackjack" onBack={() => nav(-1)} action={<span />}>
       <BlackjackTable
         seats={seats}
         playerHand={playerHand}
@@ -705,28 +705,46 @@ function MiniCard({ card, index }: { card: Card; index: number }) {
 }
 
 function ResultBanner({ result, payout, bet }: { result: RoundResult; payout: number; bet: number }) {
+  // Le banner ne se fie plus uniquement au "result" symbolique (qui peut être
+  // 'win' sur une main split alors qu'on a perdu globalement) : on calcule le
+  // NET réel (payout - bet) pour déterminer si on est gagnant, perdant ou nul.
   const delta = payout - bet;
-  const map: Record<NonNullable<RoundResult>, { text: string; color: string; emoji: string }> = {
-    win:       { text: 'Gagné !',          color: '#3DD68C',    emoji: '💰' },
-    blackjack: { text: 'BLACKJACK !',      color: '#FFD700',    emoji: '🎰' },
-    push:      { text: 'Égalité',          color: '#cdcdcd',    emoji: '🤝' },
-    lose:      { text: 'Perdu',            color: '#FF6B57',    emoji: '💸' },
-    bust:      { text: 'BUST ! (> 21)',    color: '#FF6B57',    emoji: '💥' },
+  const netResult: NonNullable<RoundResult> =
+    delta > 0
+      ? (result === 'blackjack' ? 'blackjack' : 'win')
+      : delta < 0
+      ? (result === 'bust' ? 'bust' : 'lose')
+      : 'push';
+  const map: Record<NonNullable<RoundResult>, { text: string; color: string; emoji: string; subline: (d: number, b: number, p: number) => string }> = {
+    win:       { text: 'GAGNÉ',        color: '#3DD68C', emoji: '💰', subline: (d, b, p) => `Mise ${b} → Gain ${p}  ·  Net +${d} 🪙` },
+    blackjack: { text: 'BLACKJACK !',  color: '#FFD700', emoji: '🎰', subline: (d, b, p) => `Mise ${b} → Gain ${p} (3:2)  ·  Net +${d} 🪙` },
+    push:      { text: 'ÉGALITÉ',      color: '#cdcdcd', emoji: '🤝', subline: (_d, b, _p) => `Mise ${b} rendue  ·  Net 0 🪙` },
+    lose:      { text: 'PERDU',        color: '#FF6B57', emoji: '💸', subline: (d, b, _p) => `Mise ${b} perdue  ·  Net ${d} 🪙` },
+    bust:      { text: 'BUST (> 21)',  color: '#FF6B57', emoji: '💥', subline: (d, b, _p) => `Mise ${b} perdue  ·  Net ${d} 🪙` },
   };
   if (!result) return null;
-  const cfg = map[result];
+  const cfg = map[netResult];
   return (
     <div style={{
       display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-      padding: '12px 28px', borderRadius: 14,
-      background: 'rgba(0,0,0,0.65)',
+      padding: '14px 26px', borderRadius: 14,
+      background: 'rgba(0,0,0,0.78)',
       border: `2px solid ${cfg.color}`,
       animation: 'idemPopIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both',
+      minWidth: 280,
     }}>
-      <div style={{ fontSize: 32 }}>{cfg.emoji}</div>
-      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 22, color: cfg.color, letterSpacing: 1 }}>{cfg.text}</div>
-      <div style={{ fontSize: 14, fontWeight: 700, color: delta > 0 ? '#3DD68C' : delta < 0 ? '#FF6B57' : '#cdcdcd' }}>
+      <div style={{ fontSize: 36, lineHeight: 1 }}>{cfg.emoji}</div>
+      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, color: cfg.color, letterSpacing: 1.5 }}>
+        {cfg.text}
+      </div>
+      <div style={{
+        fontSize: 18, fontWeight: 800, color: delta > 0 ? '#3DD68C' : delta < 0 ? '#FF6B57' : '#cdcdcd',
+        marginTop: 4,
+      }}>
         {delta > 0 ? `+${delta}` : delta} 🪙
+      </div>
+      <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.7)', marginTop: 4 }}>
+        {cfg.subline(delta, bet, payout)}
       </div>
       <style>{`
         @keyframes idemPopIn {
