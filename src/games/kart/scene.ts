@@ -409,30 +409,31 @@ export function syncMeshes(state: { karts: KartState[]; itemBoxes: ItemBox[]; ac
   }
 }
 
-// Caméra "rigide-mais-doux" : position pile derrière le kart (snappée pour
-// éviter toute dérive), hauteur lerpée pour rester douce sur les bosses, et
-// lookAt() DIRECTEMENT sur le kart → il reste pile au centre de l'écran à
-// chaque frame, même en plein virage. Plus de "kart-poussé-au-bord" pendant
-// les changements rapides de heading.
-export function followKart(cam: THREE.PerspectiveCamera, kart: KartState, fpsMode: boolean, dt: number, snap = false) {
-  const back = fpsMode ? -0.5 : 9.5;
-  const up   = fpsMode ?  1.6 : 5.0;
-  const camX = kart.x - Math.cos(kart.heading) * back;
-  const camZ = kart.z - Math.sin(kart.heading) * back;
-  // X/Z snappés sur la cible (zéro lerp horizontal) — c'est ce qui maintient
-  // le kart dead-center pendant les virages.
-  cam.position.x = camX;
-  cam.position.z = camZ;
-  // Y doucement lerpé pour ne pas sauter visuellement.
-  const yLerp = snap ? 1 : Math.min(1, dt * 6);
-  cam.position.y += (up - cam.position.y) * yLerp;
-  // En 3e personne, on regarde le kart lui-même (centre = kart). En FPS, on
-  // regarde 4u devant le kart pour voir la route.
-  const ty = fpsMode ? 1.5 : 0.8;
+// Caméra 100% rigide. ZERO lerp, ZERO smoothing. À chaque frame on calcule
+// la position cible depuis (kart.x, kart.z, kart.heading) et on la POSE,
+// puis on force cam.up = +Y (sinon trois cumul de lookAt peut faire dériver
+// l'up vector et casser le centrage), puis lookAt sur le kart.
+//
+// Plusieurs essais précédents avec lerp / snap-X-Z-lerp-Y ont laissé filer
+// le kart sur le bord de l'écran en virage rapide (cf. screenshots du
+// playtest). La conclusion : aucun lerp en 3e personne. Le kart EST le
+// centre de l'écran, point final.
+export function followKart(cam: THREE.PerspectiveCamera, kart: KartState, fpsMode: boolean, _dt: number, _snap = false) {
+  const c = Math.cos(kart.heading);
+  const s = Math.sin(kart.heading);
+  // Force l'up vector — three.js l'utilise dans lookAt() pour orienter
+  // correctement, et une dérive numérique ou un set manuel ailleurs peut
+  // l'avoir cassé.
+  cam.up.set(0, 1, 0);
   if (fpsMode) {
-    cam.lookAt(kart.x + Math.cos(kart.heading) * 4, ty, kart.z + Math.sin(kart.heading) * 4);
+    // Cockpit : 0.4u en avant du kart, hauteur tête.
+    cam.position.set(kart.x + c * 0.4, 1.6, kart.z + s * 0.4);
+    cam.lookAt(kart.x + c * 6, 1.5, kart.z + s * 6);
   } else {
-    cam.lookAt(kart.x, ty, kart.z);
+    // 3e personne : 9u derrière + 6u plus haut. lookAt direct sur le kart →
+    // celui-ci est PILE au centre de l'écran, dans tous les virages.
+    cam.position.set(kart.x - c * 9, 6, kart.z - s * 9);
+    cam.lookAt(kart.x, 0.9, kart.z);
   }
 }
 
