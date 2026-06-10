@@ -27,6 +27,27 @@ export function readPersistedToken(): string | null {
   return inMemoryToken;
 }
 
+// Cache local du dernier user connu (pour restauration instantanée au reload,
+// sans attendre la round-trip /me). On garde un timestamp pour expirer le cache
+// après une journée si on n'a jamais re-vérifié.
+const USER_CACHE_KEY = 'idem.user.v1';
+export function cacheUser(u: import('./types').User | null) {
+  if (typeof window === 'undefined') return;
+  if (u) localStorage.setItem(USER_CACHE_KEY, JSON.stringify({ at: Date.now(), u }));
+  else localStorage.removeItem(USER_CACHE_KEY);
+}
+export function readCachedUser(): import('./types').User | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = localStorage.getItem(USER_CACHE_KEY);
+    if (!raw) return null;
+    const { at, u } = JSON.parse(raw) as { at: number; u: import('./types').User };
+    // Cache valide 7 jours — au-delà on force une revalidation
+    if (Date.now() - at > 7 * 86_400_000) return null;
+    return u;
+  } catch { return null; }
+}
+
 export class ApiError extends Error {
   status: number;
   body: unknown;
