@@ -117,6 +117,10 @@ export const api = {
     call<Match>(`/matches/${id}/score`, { method: 'PATCH', body: JSON.stringify({ scoreP1, scoreP2, source }) }),
   finishMatch: (id: string) =>
     call<Match>(`/matches/${id}/finish`, { method: 'POST' }),
+  // Annule un match pending ou active (status → 'cancelled'). Ignoré par
+  // leaderboard / historique / badges. N'importe quel participant peut annuler.
+  cancelMatch: (id: string) =>
+    call<Match>(`/matches/${id}/cancel`, { method: 'POST' }),
 
   leaderboard: (game?: string) =>
     call<LeaderboardEntry[]>(`/leaderboard${game ? `?game=${encodeURIComponent(game)}` : ''}`),

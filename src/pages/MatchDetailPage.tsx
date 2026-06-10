@@ -38,6 +38,19 @@ export function MatchDetailPage() {
     onSuccess: (updated) => qc.setQueryData(['match', id], updated),
   });
 
+  // Annule le match (status → cancelled), ignoré par stats / classement.
+  // Confirmation simple via window.confirm — c'est destructif.
+  const cancelMut = useMutation({
+    mutationFn: () => api.cancelMatch(id),
+    onSuccess: (updated) => {
+      qc.setQueryData(['match', id], updated);
+      qc.invalidateQueries({ queryKey: ['matches'] });
+      // Cancelled → on file au classement direct (le redirect auto ne se déclenche
+      // que sur 'finished', pas sur 'cancelled').
+      nav('/', { replace: true });
+    },
+  });
+
   // Si le match TRANSITIONNE vers finished pendant qu'on est sur la page
   // (i.e. on est arrivé sur un match pending/active et il vient de se terminer),
   // on file sur le classement 2s plus tard. Si on arrive sur un match déjà fini
@@ -102,7 +115,16 @@ export function MatchDetailPage() {
   if (playable && m.status === 'active') {
     return (
       <Shell title={displayGame(m.game)} onBack={() => nav(-1)} action={<StatusBadge status={m.status} />}>
-        <PlayableGameRoom match={m} onMatchUpdated={(u) => qc.setQueryData<Match>(['match', m.id], u)} />
+        <PlayableGameRoom
+          match={m}
+          onMatchUpdated={(u) => qc.setQueryData<Match>(['match', m.id], u)}
+          onCancel={() => {
+            if (window.confirm("Annuler ce match ? Il ne comptera pas dans le classement.")) {
+              cancelMut.mutate();
+            }
+          }}
+          cancelling={cancelMut.isPending}
+        />
       </Shell>
     );
   }
@@ -140,10 +162,24 @@ export function MatchDetailPage() {
         )}
       </div>
 
-      <div style={{ marginTop: 18, display: 'flex', gap: 10 }}>
+      <div style={{ marginTop: 18, display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         {m.status === 'active' && (
           <button className="btn btn-accent" onClick={() => finishMut.mutate()} disabled={finishMut.isPending}>
             Terminer le match
+          </button>
+        )}
+        {(m.status === 'active' || m.status === 'pending') && (
+          <button
+            className="btn btn-line"
+            onClick={() => {
+              if (window.confirm("Annuler ce match ? Il ne comptera pas dans le classement.")) {
+                cancelMut.mutate();
+              }
+            }}
+            disabled={cancelMut.isPending}
+            title="Le match sera marqué annulé et ignoré par les stats"
+          >
+            {cancelMut.isPending ? '…' : 'Annuler le match'}
           </button>
         )}
         {m.status === 'finished' && (
@@ -160,7 +196,12 @@ export function MatchDetailPage() {
 // Affiche un bandeau au-dessus avec les deux joueurs (pour rappel) puis le
 // composant du jeu. À la fin de partie (onFinish), reportScore et le polling
 // du parent fait le reste (le match passe à finished, redirect 2s vers /).
-function PlayableGameRoom({ match, onMatchUpdated }: { match: Match; onMatchUpdated: (m: Match) => void }) {
+function PlayableGameRoom({ match, onMatchUpdated, onCancel, cancelling }: {
+  match: Match;
+  onMatchUpdated: (m: Match) => void;
+  onCancel: () => void;
+  cancelling: boolean;
+}) {
   const mod = moduleById(match.game);
   const reportMut = useMutation({
     mutationFn: ({ p1, p2 }: { p1: number; p2: number }) => reportScore(match.id, p1, p2),
@@ -170,23 +211,30 @@ function PlayableGameRoom({ match, onMatchUpdated }: { match: Match; onMatchUpda
     return <div className="panel" style={{ color: 'var(--loss)' }}>Module de jeu introuvable pour "{match.game}".</div>;
   }
   return (
-    <div className="panel" style={{ padding: 16 }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, marginBottom: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Avatar seed={match.player1?.pseudo ?? 'P1'} size={36} imageUrl={absoluteAvatar(match.player1?.avatarUrl ?? null)} />
-          <strong style={{ color: 'var(--loss)' }}>{match.player1?.pseudo ?? 'P1'}</strong>
+    <>
+      <div className="panel" style={{ padding: 16 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Avatar seed={match.player1?.pseudo ?? 'P1'} size={36} imageUrl={absoluteAvatar(match.player1?.avatarUrl ?? null)} />
+            <strong style={{ color: 'var(--loss)' }}>{match.player1?.pseudo ?? 'P1'}</strong>
+          </div>
+          <span style={{ color: 'var(--muted)', fontFamily: 'var(--font-display)' }}>vs</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Avatar seed={match.player2?.pseudo ?? 'P2'} size={36} imageUrl={absoluteAvatar(match.player2?.avatarUrl ?? null)} />
+            <strong style={{ color: 'var(--blue)' }}>{match.player2?.pseudo ?? 'P2'}</strong>
+          </div>
         </div>
-        <span style={{ color: 'var(--muted)', fontFamily: 'var(--font-display)' }}>vs</span>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <Avatar seed={match.player2?.pseudo ?? 'P2'} size={36} imageUrl={absoluteAvatar(match.player2?.avatarUrl ?? null)} />
-          <strong style={{ color: 'var(--blue)' }}>{match.player2?.pseudo ?? 'P2'}</strong>
-        </div>
+        <mod.Component onFinish={(p1, p2) => reportMut.mutate({ p1, p2 })} />
+        {reportMut.isPending && (
+          <div style={{ textAlign: 'center', color: 'var(--muted)', marginTop: 12 }}>Envoi du score…</div>
+        )}
       </div>
-      <mod.Component onFinish={(p1, p2) => reportMut.mutate({ p1, p2 })} />
-      {reportMut.isPending && (
-        <div style={{ textAlign: 'center', color: 'var(--muted)', marginTop: 12 }}>Envoi du score…</div>
-      )}
-    </div>
+      <div style={{ marginTop: 14, textAlign: 'center' }}>
+        <button className="btn btn-line btn-sm" onClick={onCancel} disabled={cancelling}>
+          {cancelling ? '…' : 'Annuler le match'}
+        </button>
+      </div>
+    </>
   );
 }
 
