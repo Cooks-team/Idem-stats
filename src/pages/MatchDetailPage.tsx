@@ -4,7 +4,9 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { absoluteAvatar, api } from '../api/client';
 import { Shell } from '../ui/Shell';
 import { Avatar } from '../ui/Avatar';
-import { displayGame } from '../games/registry';
+import { displayGame, KNOWN_GAMES } from '../games/registry';
+import { moduleById } from '../games/GameModule';
+import { reportScore } from '../games/reportScore';
 import type { Match, ShifumiMetadata, ShifumiPick } from '../api/types';
 import { SHIFUMI_EMOJIS, SHIFUMI_LABELS, SHIFUMI_PICKS } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
@@ -93,6 +95,18 @@ export function MatchDetailPage() {
     );
   }
 
+  // Jeux jouables côté web (snake, clicker) : on rend le composant du jeu inline
+  // dans la room dès que le match est active. À la fin (onFinish), PATCH score +
+  // finish — comme le wrapper GamePlayPage du hub, mais dans la room du duel.
+  const playable = KNOWN_GAMES.find((g) => g.apiId === m.game)?.playable;
+  if (playable && m.status === 'active') {
+    return (
+      <Shell title={displayGame(m.game)} onBack={() => nav(-1)} action={<StatusBadge status={m.status} />}>
+        <PlayableGameRoom match={m} onMatchUpdated={(u) => qc.setQueryData<Match>(['match', m.id], u)} />
+      </Shell>
+    );
+  }
+
   return (
     <Shell title={displayGame(m.game)} onBack={() => nav(-1)} action={<StatusBadge status={m.status} />}>
       <div className="panel" style={{ padding: '40px 30px' }}>
@@ -139,6 +153,40 @@ export function MatchDetailPage() {
         )}
       </div>
     </Shell>
+  );
+}
+
+// Wrapper qui rend le mini-jeu (Snake, Clicker…) dans la room du match.
+// Affiche un bandeau au-dessus avec les deux joueurs (pour rappel) puis le
+// composant du jeu. À la fin de partie (onFinish), reportScore et le polling
+// du parent fait le reste (le match passe à finished, redirect 2s vers /).
+function PlayableGameRoom({ match, onMatchUpdated }: { match: Match; onMatchUpdated: (m: Match) => void }) {
+  const mod = moduleById(match.game);
+  const reportMut = useMutation({
+    mutationFn: ({ p1, p2 }: { p1: number; p2: number }) => reportScore(match.id, p1, p2),
+    onSuccess: (m) => onMatchUpdated(m),
+  });
+  if (!mod) {
+    return <div className="panel" style={{ color: 'var(--loss)' }}>Module de jeu introuvable pour "{match.game}".</div>;
+  }
+  return (
+    <div className="panel" style={{ padding: 16 }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 18, marginBottom: 14 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Avatar seed={match.player1?.pseudo ?? 'P1'} size={36} imageUrl={absoluteAvatar(match.player1?.avatarUrl ?? null)} />
+          <strong style={{ color: 'var(--loss)' }}>{match.player1?.pseudo ?? 'P1'}</strong>
+        </div>
+        <span style={{ color: 'var(--muted)', fontFamily: 'var(--font-display)' }}>vs</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <Avatar seed={match.player2?.pseudo ?? 'P2'} size={36} imageUrl={absoluteAvatar(match.player2?.avatarUrl ?? null)} />
+          <strong style={{ color: 'var(--blue)' }}>{match.player2?.pseudo ?? 'P2'}</strong>
+        </div>
+      </div>
+      <mod.Component onFinish={(p1, p2) => reportMut.mutate({ p1, p2 })} />
+      {reportMut.isPending && (
+        <div style={{ textAlign: 'center', color: 'var(--muted)', marginTop: 12 }}>Envoi du score…</div>
+      )}
+    </div>
   );
 }
 
