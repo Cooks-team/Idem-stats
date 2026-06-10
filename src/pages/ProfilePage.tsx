@@ -6,7 +6,8 @@ import type { Badge, Match, ShifumiMetadata } from '../api/types';
 import { useAuth } from '../auth/AuthContext';
 import { Shell } from '../ui/Shell';
 import { Avatar } from '../ui/Avatar';
-import { displayGame } from '../games/registry';
+import { displayGame, KNOWN_GAMES } from '../games/registry';
+import { RankBadge } from './HomePage';
 
 export function ProfilePage() {
   const { user, logout, setUser } = useAuth();
@@ -53,8 +54,16 @@ export function ProfilePage() {
           ) : (
             <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 36 }}>{target}</div>
           )}
-          <div style={{ color: 'var(--muted)', marginTop: 4 }}>
-            {rank >= 0 ? `Rang ${rank + 1} / ${entries.length}` : 'Pas encore classé'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
+            {entry?.rank && <RankBadge rank={entry.rank} />}
+            {entry && (
+              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 18, color: entry.rank.color }}>
+                {entry.elo} <span style={{ fontSize: 12, color: 'var(--muted)' }}>ELO</span>
+              </span>
+            )}
+            <span style={{ color: 'var(--muted)', fontSize: 13 }}>
+              · {rank >= 0 ? `Rang ${rank + 1} / ${entries.length}` : 'Pas encore classé'}
+            </span>
           </div>
         </div>
         {isMe && <AvatarUpload onChange={setUser} hasAvatar={!!user?.avatarUrl} />}
@@ -66,6 +75,34 @@ export function ProfilePage() {
         <Stat label="Parties" value={entry?.played ?? 0} color="var(--text)" />
         <Stat label="Winrate" value={entry ? `${Math.round(entry.winrate * 100)}%` : '—'} color="var(--accent)" />
       </div>
+
+      {/* ELO par jeu — utile pour voir où le joueur est fort */}
+      {entry && Object.keys(entry.perGameElo).length > 0 && (
+        <div style={{ marginTop: 28 }}>
+          <div className="eyebrow"><span className="label">ELO par jeu</span></div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 10 }}>
+            {KNOWN_GAMES
+              .map((g) => ({ apiId: g.apiId, display: g.display, e: entry.perGameElo[g.apiId] }))
+              .filter((row) => row.e)
+              .sort((a, b) => (b.e!.rating - a.e!.rating))
+              .map(({ apiId, display, e }) => (
+                <div key={apiId} className="panel" style={{ padding: 12, display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>{display}</div>
+                    <div style={{ marginTop: 4 }}>
+                      <RankBadge rank={e!.rank} size="sm" />
+                    </div>
+                    <div style={{ marginTop: 4, fontSize: 11.5, color: 'var(--muted)' }}>{e!.games} partie{e!.games > 1 ? 's' : ''}</div>
+                  </div>
+                  <div className="tabular" style={{
+                    fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 28,
+                    color: e!.rank.color, lineHeight: 1,
+                  }}>{e!.rating}</div>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
 
       {/* Badges décernés */}
       {badges.length > 0 && (

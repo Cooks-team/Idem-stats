@@ -242,15 +242,18 @@ function LeaderboardView({ entries, isLoading, filter, setFilter, user, myIndex,
             }} onClick={() => nav('/profile')}>
               <RankNum n={myRank} size={22} />
               <Avatar seed={user!.pseudo} size={46} imageUrl={absoluteAvatar(user!.avatarUrl)} />
-              <div style={{ flex: 1 }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
                 <div style={{ fontWeight: 700, fontSize: 17 }}>Vous · {user!.pseudo}</div>
-                <div style={{ fontSize: 13, color: 'var(--muted)' }}>
-                  {entries[myIndex].wins}V · {entries[myIndex].losses}D · {(entries[myIndex].winrate * 100).toFixed(0)}%
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 2 }}>
+                  <RankBadge rank={entries[myIndex].rank} size="sm" />
+                  <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>
+                    · {entries[myIndex].wins}V {entries[myIndex].losses}D · {(entries[myIndex].winrate * 100).toFixed(0)}%
+                  </span>
                 </div>
               </div>
               <div style={{ textAlign: 'right' }}>
-                <div className="tabular" style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 28 }}>{entries[myIndex].wins}</div>
-                <div style={{ fontSize: 11, color: 'var(--muted)' }}>VICTOIRES</div>
+                <div className="tabular" style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 28, color: entries[myIndex].rank.color }}>{entries[myIndex].elo}</div>
+                <div style={{ fontSize: 10.5, color: 'var(--muted)', letterSpacing: 0.5 }}>ELO</div>
               </div>
             </div>
           )}
@@ -347,12 +350,39 @@ function RankRow({ rank, entry, onClick }: { rank: number; entry: LeaderboardEnt
       <Avatar seed={entry.user.pseudo} size={40} imageUrl={absoluteAvatar(entry.user.avatarUrl)} />
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontWeight: 600, fontSize: 15.5 }}>{entry.user.pseudo}</div>
-        <div style={{ fontSize: 12.5, color: 'var(--muted)' }}>{entry.wins}V · {entry.losses}D</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+          <RankBadge rank={entry.rank} size="sm" />
+          <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>· {entry.wins}V {entry.losses}D</span>
+        </div>
       </div>
       <div style={{ textAlign: 'right' }}>
-        <div className="tabular" style={{ fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: 18 }}>{entry.wins}</div>
-        <div style={{ fontSize: 11.5, color: 'var(--muted)' }}>{(entry.winrate * 100).toFixed(0)}%</div>
+        <div className="tabular" style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22, color: entry.rank.color, lineHeight: 1 }}>
+          {entry.elo}
+        </div>
+        <div style={{ fontSize: 10.5, color: 'var(--muted)', letterSpacing: 0.5 }}>ELO</div>
       </div>
     </div>
+  );
+}
+
+// Badge de rank (Bronze / Argent / Or / Platine / Diamant / Maître / Légende).
+// Affiché en pill colorée avec l'emoji du tier.
+export function RankBadge({ rank, size = 'md' }: { rank: import('../api/types').RankTier; size?: 'sm' | 'md' }) {
+  const isSm = size === 'sm';
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      padding: isSm ? '2px 8px' : '4px 12px',
+      borderRadius: 999,
+      background: `color-mix(in oklab, ${rank.color} 20%, var(--surface))`,
+      border: `1px solid ${rank.color}`,
+      color: rank.color,
+      fontFamily: 'var(--font-display)', fontWeight: 700,
+      fontSize: isSm ? 11 : 13, letterSpacing: 0.5,
+      whiteSpace: 'nowrap',
+    }}>
+      <span style={{ fontSize: isSm ? 13 : 16 }}>{rank.emoji}</span>
+      <span>{rank.name}</span>
+    </span>
   );
 }
