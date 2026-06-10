@@ -16,13 +16,40 @@ const PADDLE_H = 80;
 const BALL_R = 8;
 const PADDLE_SPEED = 6;
 const INIT_BALL_SPEED = 5;
-const SPEED_INCREMENT = 0.4;
-const MAX_BALL_SPEED = 11;
+// Accélération à chaque rebond paddle. Plus le rally dure, plus ça pique.
+const SPEED_INCREMENT = 0.85;
+// Drift continu : la balle prend +0.5% de vitesse par frame quand elle est en
+// play (entre 2 points). Sur 5 secondes de rally ça finit par +20% sans rebond.
+const SPEED_DRIFT_PER_FRAME = 1.005;
+const MAX_BALL_SPEED = 18;
 const WIN_SCORE = 11;
 const TICK_MS = 16; // ~60fps
 
 interface Ball { x: number; y: number; vx: number; vy: number }
 interface Paddles { p1Y: number; p2Y: number }
+
+// Couleur de la balle qui shift selon la vitesse — jaune fluo au démarrage,
+// orange en milieu de rally, rouge incandescent quand ça tape vite.
+function ballColorForSpeed(speed: number): string {
+  // Range : INIT_BALL_SPEED → MAX_BALL_SPEED mappé sur 0..1
+  const t = Math.min(1, Math.max(0, (speed - INIT_BALL_SPEED) / (MAX_BALL_SPEED - INIT_BALL_SPEED)));
+  // Interpole jaune-fluo (#D6FF3D) → orange (#FF8C42) → rouge incandescent (#FF3D2D)
+  if (t < 0.5) {
+    const k = t / 0.5;
+    return lerpColor('#D6FF3D', '#FF8C42', k);
+  }
+  const k = (t - 0.5) / 0.5;
+  return lerpColor('#FF8C42', '#FF3D2D', k);
+}
+function lerpColor(a: string, b: string, t: number): string {
+  const pa = parseInt(a.slice(1), 16), pb = parseInt(b.slice(1), 16);
+  const ra = (pa >> 16) & 0xff, ga = (pa >> 8) & 0xff, ba = pa & 0xff;
+  const rb = (pb >> 16) & 0xff, gb = (pb >> 8) & 0xff, bb = pb & 0xff;
+  const r = Math.round(ra + (rb - ra) * t);
+  const g = Math.round(ga + (gb - ga) * t);
+  const bl = Math.round(ba + (bb - ba) * t);
+  return `rgb(${r}, ${g}, ${bl})`;
+}
 
 function initBall(direction: 1 | -1): Ball {
   const angle = (Math.random() - 0.5) * 0.6; // léger angle initial
@@ -49,12 +76,15 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [phase, setPhase] = useState<'ready' | 'running' | 'done'>('ready');
   const [myScheme, setMyScheme] = useState<PongScheme>(mode === 'guest' ? 'zqsd' : 'arrows');
-  const stateRef = useRef<{ paddles: Paddles; ball: Ball; keys: Set<string>; guestUp: boolean; guestDown: boolean }>({
+  // Trail de la balle (5 dernières positions) → ligne lumineuse derrière elle
+  // qui s'épaissit avec la vitesse. Donne le feel arcade quand ça envoie.
+  const stateRef = useRef<{ paddles: Paddles; ball: Ball; keys: Set<string>; guestUp: boolean; guestDown: boolean; trail: Array<{ x: number; y: number }> }>({
     paddles: { p1Y: (H - PADDLE_H) / 2, p2Y: (H - PADDLE_H) / 2 },
     ball: initBall(1),
     keys: new Set(),
     guestUp: false,
     guestDown: false,
+    trail: [],
   });
   const [score, setScore] = useState({ p1: 0, p2: 0 });
 
@@ -84,6 +114,7 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
       keys: new Set(),
       guestUp: false,
       guestDown: false,
+      trail: [],
     };
     setScore({ p1: 0, p2: 0 });
     sentGuestRef.current = { up: false, down: false };
@@ -172,11 +203,25 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
         if (s.guestDown) s.paddles.p2Y = Math.min(H - PADDLE_H, s.paddles.p2Y + PADDLE_SPEED);
       }
 
-      // 2) Bouge la balle
+      // 2) Drift continu : la balle accélère légèrement chaque frame tant
+      //    qu'elle est en play. Plafonné par MAX_BALL_SPEED.
+      const curSp = Math.hypot(s.ball.vx, s.ball.vy);
+      if (curSp > 0 && curSp < MAX_BALL_SPEED) {
+        const targetSp = Math.min(curSp * SPEED_DRIFT_PER_FRAME, MAX_BALL_SPEED);
+        const k = targetSp / curSp;
+        s.ball.vx *= k;
+        s.ball.vy *= k;
+      }
+
+      // 3) Trail (5 dernières positions, FIFO)
+      s.trail.push({ x: s.ball.x, y: s.ball.y });
+      if (s.trail.length > 5) s.trail.shift();
+
+      // 4) Bouge la balle
       s.ball.x += s.ball.vx;
       s.ball.y += s.ball.vy;
 
-      // 3) Rebonds haut/bas
+      // 5) Rebonds haut/bas
       if (s.ball.y - BALL_R <= 0 && s.ball.vy < 0) { s.ball.y = BALL_R; s.ball.vy *= -1; }
       if (s.ball.y + BALL_R >= H && s.ball.vy > 0) { s.ball.y = H - BALL_R; s.ball.vy *= -1; }
 
@@ -192,7 +237,9 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
         s.ball = bounceFromPaddle(s.ball, s.paddles.p1Y, -1);
       }
 
-      // 5) But ? — la balle sort à gauche → J1 marque ; à droite → J2 marque
+      // 7) But ? — la balle sort à gauche → J1 marque ; à droite → J2 marque
+      //    On reset aussi le trail au nouveau point pour qu'il ne traverse pas
+      //    le terrain.
       if (s.ball.x < -BALL_R) {
         setScore((sc) => {
           const next = { ...sc, p1: sc.p1 + 1 };
@@ -200,6 +247,7 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
           return next;
         });
         s.ball = initBall(1);
+        s.trail = [];
       } else if (s.ball.x > W + BALL_R) {
         setScore((sc) => {
           const next = { ...sc, p2: sc.p2 + 1 };
@@ -207,6 +255,7 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
           return next;
         });
         s.ball = initBall(-1);
+        s.trail = [];
       }
 
       // 6) Broadcast state au guest (host)
@@ -304,7 +353,7 @@ function isHandled(key: string): boolean {
   return k === 'arrowup' || k === 'arrowdown' || k === 'z' || k === 'w' || k === 's';
 }
 
-function draw(ctx: CanvasRenderingContext2D, s: { paddles: Paddles; ball: Ball }) {
+function draw(ctx: CanvasRenderingContext2D, s: { paddles: Paddles; ball: Ball; trail: Array<{ x: number; y: number }> }) {
   ctx.fillStyle = '#0B0D10';
   ctx.fillRect(0, 0, W, H);
 
@@ -323,8 +372,30 @@ function draw(ctx: CanvasRenderingContext2D, s: { paddles: Paddles; ball: Ball }
   ctx.fillStyle = '#FF6B57';
   ctx.fillRect(W - 20 - PADDLE_W, s.paddles.p1Y, PADDLE_W, PADDLE_H);
 
-  // Balle
-  ctx.fillStyle = '#D6FF3D';
+  // Trail derrière la balle — devient plus visible et plus épais à mesure
+  // que la balle accélère.
+  const speed = Math.hypot(s.ball.vx, s.ball.vy);
+  const speedT = Math.min(1, Math.max(0, (speed - INIT_BALL_SPEED) / (MAX_BALL_SPEED - INIT_BALL_SPEED)));
+  const color = ballColorForSpeed(speed);
+  if (s.trail && s.trail.length > 1) {
+    for (let i = 0; i < s.trail.length; i++) {
+      const p = s.trail[i];
+      const alpha = ((i + 1) / s.trail.length) * (0.18 + 0.4 * speedT);
+      const r = BALL_R * (0.35 + (i / s.trail.length) * 0.55);
+      ctx.fillStyle = color.replace('rgb', 'rgba').replace(')', `, ${alpha})`);
+      ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  // Glow autour de la balle à haute vitesse
+  if (speedT > 0.4) {
+    const glowR = BALL_R + 6 + speedT * 8;
+    ctx.fillStyle = color.replace('rgb', 'rgba').replace(')', `, ${0.18 * speedT})`);
+    ctx.beginPath(); ctx.arc(s.ball.x, s.ball.y, glowR, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // Balle (couleur shift selon vitesse : jaune fluo → orange → rouge)
+  ctx.fillStyle = color;
   ctx.beginPath();
   ctx.arc(s.ball.x, s.ball.y, BALL_R, 0, Math.PI * 2);
   ctx.fill();
