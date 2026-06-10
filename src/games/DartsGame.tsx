@@ -63,6 +63,9 @@ function DartsComponent({ onFinish }: GameProps) {
 
   // État de la fléchette en cours de drag / vol
   const [dartPos, setDartPos] = useState<V2>({ x: DART_REST_X, y: DART_REST_Y });
+  // Échelle de la fléchette : 1.0 au repos (close to viewer), ~0.5 en vol au moment
+  // où elle se plante (perspective Plato : la dart "s'éloigne" vers la cible).
+  const [dartScale, setDartScale] = useState(1.0);
   const [dragging, setDragging] = useState(false);
   const [flying, setFlying] = useState<{ from: V2; to: V2; startedAt: number } | null>(null);
   // Historique des positions pendant le drag → utilisé pour estimer la vitesse à la release
@@ -143,22 +146,24 @@ function DartsComponent({ onFinish }: GameProps) {
     setFlying({ from: { x: DART_REST_X, y: DART_REST_Y }, to: landingPt, startedAt: performance.now() });
   }
 
-  // Animation du vol : interpolation + parabole verticale, ~300ms
+  // Animation du vol : interpolation + parabole verticale + scale 3D (la dart
+  // "s'éloigne" du viewer en plongeant vers la cible — feel Plato).
   useEffect(() => {
     if (!flying) return;
     let raf = 0;
-    const dur = 320;
+    const dur = 350;
     const tick = () => {
       const t = Math.min(1, (performance.now() - flying.startedAt) / dur);
       const x = flying.from.x + (flying.to.x - flying.from.x) * t;
       const y = flying.from.y + (flying.to.y - flying.from.y) * t;
-      // Parabole : on monte un peu au milieu
       const arc = Math.sin(t * Math.PI) * 0.08;
       setDartPos({ x, y: y - arc });
+      // Perspective : scale 1.0 → 0.45 au cours du vol. La dart s'enfonce dans
+      // la cible donc devient plus petite (effet de profondeur).
+      setDartScale(1.0 - 0.55 * t);
       if (t < 1) {
         raf = requestAnimationFrame(tick);
       } else {
-        // Atterrissage → score + reset
         applyHit(flying.to);
       }
     };
@@ -185,6 +190,7 @@ function DartsComponent({ onFinish }: GameProps) {
         setTurn(turn === 1 ? 2 : 1);
         // Dart au repos
         setDartPos({ x: DART_REST_X, y: DART_REST_Y });
+        setDartScale(1.0);
       }, 1100);
       return;
     }
@@ -193,8 +199,9 @@ function DartsComponent({ onFinish }: GameProps) {
     setScores((sc) => ({ ...sc, [myKey]: newScore }));
     const newTurnHits = [...turnHits, fullHit];
     setTurnHits(newTurnHits);
-    // Dart suivante au repos
+    // Dart suivante au repos, taille de prise en main (1.0)
     setDartPos({ x: DART_REST_X, y: DART_REST_Y });
+    setDartScale(1.0);
 
     // WIN
     if (newScore === 0) {
@@ -263,6 +270,7 @@ function DartsComponent({ onFinish }: GameProps) {
         onPointerUp={onPointerUp}
         hits={allHits}
         dartPos={dartPos}
+        dartScale={dartScale}
         dragging={dragging}
         flying={!!flying}
         disabled={!canThrow}
@@ -294,13 +302,14 @@ function PlayerCard({ label, score, active, color }: { label: string; score: num
 }
 
 // ─── Cible SVG + fléchette draggable ──────────────────────────────────────
-function Dartboard({ svgRef, onPointerDown, onPointerMove, onPointerUp, hits, dartPos, dragging, flying, disabled }: {
+function Dartboard({ svgRef, onPointerDown, onPointerMove, onPointerUp, hits, dartPos, dartScale, dragging, flying, disabled }: {
   svgRef: React.RefObject<SVGSVGElement>;
   onPointerDown: (e: React.PointerEvent<SVGSVGElement>) => void;
   onPointerMove: (e: React.PointerEvent<SVGSVGElement>) => void;
   onPointerUp: (e: React.PointerEvent<SVGSVGElement>) => void;
   hits: Hit[];
   dartPos: V2;
+  dartScale: number;
   dragging: boolean;
   flying: boolean;
   disabled: boolean;
@@ -344,20 +353,102 @@ function Dartboard({ svgRef, onPointerDown, onPointerMove, onPointerUp, hits, da
           userSelect: 'none',
         }}
       >
-        {/* Fond du board (cercle noir) */}
-        <circle cx="0" cy="0" r="1.13" fill="#0B0B0E" />
-        {segments}
-        <circle cx="0" cy="0" r={R_BULL} fill={COLOR_BULL} />
-        <circle cx="0" cy="0" r={R_BULLSEYE} fill={COLOR_BULLSEYE} />
+        <defs>
+          {/* Lighting du board : highlight en haut-gauche pour évoquer une lumière de salle */}
+          <radialGradient id="boardLight" cx="35%" cy="25%" r="100%">
+            <stop offset="0%"  stopColor="rgba(255,255,255,0.18)" />
+            <stop offset="55%" stopColor="rgba(255,255,255,0)" />
+            <stop offset="100%" stopColor="rgba(0,0,0,0.35)" />
+          </radialGradient>
+          {/* Cerclage extérieur bois (frame du board réel) */}
+          <radialGradient id="woodRing" cx="50%" cy="50%" r="50%">
+            <stop offset="86%" stopColor="#3a2418" />
+            <stop offset="95%" stopColor="#5d3a25" />
+            <stop offset="100%" stopColor="#2a1810" />
+          </radialGradient>
+          {/* Bull/bullseye glossy */}
+          <radialGradient id="bullGloss" cx="40%" cy="32%" r="70%">
+            <stop offset="0%"  stopColor="#52c47b" />
+            <stop offset="100%" stopColor="#0b6233" />
+          </radialGradient>
+          <radialGradient id="bullseyeGloss" cx="40%" cy="32%" r="70%">
+            <stop offset="0%"  stopColor="#ed5048" />
+            <stop offset="100%" stopColor="#8e1e1a" />
+          </radialGradient>
+          {/* Métal de la tige de la dart */}
+          <linearGradient id="dartShaft" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%"  stopColor="#6b6f78" />
+            <stop offset="48%" stopColor="#e0e3e8" />
+            <stop offset="100%" stopColor="#5a5d65" />
+          </linearGradient>
+          {/* Pointe chrome */}
+          <linearGradient id="dartTip" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%"  stopColor="#aab" />
+            <stop offset="50%" stopColor="#fff" />
+            <stop offset="100%" stopColor="#778" />
+          </linearGradient>
+          {/* Plumes : dégradé pour donner du volume */}
+          <linearGradient id="dartFletchL" x1="1" y1="0" x2="0" y2="0">
+            <stop offset="0%"  stopColor="#d6ff3d" />
+            <stop offset="100%" stopColor="#7a9b22" />
+          </linearGradient>
+          <linearGradient id="dartFletchR" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%"  stopColor="#d6ff3d" />
+            <stop offset="100%" stopColor="#7a9b22" />
+          </linearGradient>
+          {/* Filtre d'ombre du board sur le fond */}
+          <filter id="boardShadow" x="-30%" y="-30%" width="160%" height="160%">
+            <feGaussianBlur in="SourceAlpha" stdDeviation="0.04" />
+            <feOffset dx="0" dy="0.025" result="off" />
+            <feComponentTransfer><feFuncA type="linear" slope="0.6" /></feComponentTransfer>
+            <feMerge><feMergeNode /><feMergeNode in="SourceGraphic" /></feMerge>
+          </filter>
+        </defs>
 
-        {/* Impacts précédents */}
-        {hits.map((h, i) => (
-          <g key={i}>
-            <circle cx={h.x} cy={h.y} r={0.022} fill="white" stroke="#000" strokeWidth={0.006} />
-            <line x1={h.x - 0.018} y1={h.y - 0.018} x2={h.x + 0.018} y2={h.y + 0.018}
-              stroke="#666" strokeWidth={0.005} />
-          </g>
-        ))}
+        {/* Mur de fond : ambient sombre + vignette */}
+        <rect x="-1.15" y="-1.15" width="2.3" height="2.8" fill="#15161a" />
+        <radialGradient id="wallVignette" cx="50%" cy="40%" r="70%">
+          <stop offset="0%"  stopColor="rgba(40,42,48,0)" />
+          <stop offset="100%" stopColor="rgba(0,0,0,0.6)" />
+        </radialGradient>
+        <rect x="-1.15" y="-1.15" width="2.3" height="2.8" fill="url(#wallVignette)" />
+
+        {/* Ombre portée du board sur le mur */}
+        <ellipse cx="0.04" cy="0.06" rx="1.13" ry="1.13" fill="rgba(0,0,0,0.55)" filter="url(#boardShadow)" />
+
+        {/* Frame en bois autour du board */}
+        <circle cx="0" cy="0" r="1.13" fill="url(#woodRing)" />
+        {/* Fond noir du board (anneau extérieur numéroté) */}
+        <circle cx="0" cy="0" r="1.05" fill="#0B0B0E" />
+
+        {/* Segments + numéros */}
+        {segments}
+
+        {/* Bull (vert) + bullseye (rouge) avec glossy gradient */}
+        <circle cx="0" cy="0" r={R_BULL} fill="url(#bullGloss)" />
+        <circle cx="0" cy="0" r={R_BULLSEYE} fill="url(#bullseyeGloss)" />
+
+        {/* Lighting overlay sur tout le board (highlight haut-gauche, vignette globale) */}
+        <circle cx="0" cy="0" r="1.05" fill="url(#boardLight)" style={{ pointerEvents: 'none' }} />
+
+        {/* Câblage métallique entre les segments (le "spider" du board réel) */}
+        {[...Array(20)].map((_, i) => {
+          const a = (-90 + i * 18 - 9) * Math.PI / 180;
+          return (
+            <line key={`sp-${i}`}
+              x1={R_BULL * Math.cos(a)} y1={R_BULL * Math.sin(a)}
+              x2={R_DOUBLE_OUT * Math.cos(a)} y2={R_DOUBLE_OUT * Math.sin(a)}
+              stroke="rgba(180,180,180,0.35)" strokeWidth={0.004} style={{ pointerEvents: 'none' }} />
+          );
+        })}
+        <circle cx="0" cy="0" r={R_BULL} fill="none" stroke="rgba(220,220,220,0.5)" strokeWidth={0.005} style={{ pointerEvents: 'none' }} />
+        <circle cx="0" cy="0" r={R_TRIPLE_IN}  fill="none" stroke="rgba(180,180,180,0.35)" strokeWidth={0.004} style={{ pointerEvents: 'none' }} />
+        <circle cx="0" cy="0" r={R_TRIPLE_OUT} fill="none" stroke="rgba(180,180,180,0.35)" strokeWidth={0.004} style={{ pointerEvents: 'none' }} />
+        <circle cx="0" cy="0" r={R_DOUBLE_IN}  fill="none" stroke="rgba(180,180,180,0.35)" strokeWidth={0.004} style={{ pointerEvents: 'none' }} />
+        <circle cx="0" cy="0" r={R_DOUBLE_OUT} fill="none" stroke="rgba(220,220,220,0.55)" strokeWidth={0.005} style={{ pointerEvents: 'none' }} />
+
+        {/* Darts plantées du tour (look 3D : on voit la queue qui sort) */}
+        {hits.map((h, i) => <StuckDart key={i} x={h.x} y={h.y} />)}
 
         {/* Ligne de visée pendant le drag */}
         {dragging && (
@@ -366,45 +457,84 @@ function Dartboard({ svgRef, onPointerDown, onPointerMove, onPointerUp, hits, da
             x2={dartPos.x} y2={dartPos.y}
             stroke="rgba(214,255,61,0.55)" strokeWidth={0.012}
             strokeDasharray="0.04 0.03"
+            style={{ pointerEvents: 'none' }}
           />
         )}
 
-        {/* Zone de la fléchette au repos (cercle subtil pour indiquer le hit target) */}
+        {/* Zone de la fléchette au repos */}
         {!dragging && !flying && (
-          <circle cx={DART_REST_X} cy={DART_REST_Y} r="0.28"
-            fill="rgba(214,255,61,0.07)" stroke="rgba(214,255,61,0.30)" strokeWidth={0.008}
-            strokeDasharray="0.04 0.03" />
+          <circle cx={DART_REST_X} cy={DART_REST_Y} r="0.32"
+            fill="rgba(214,255,61,0.06)" stroke="rgba(214,255,61,0.30)" strokeWidth={0.008}
+            strokeDasharray="0.04 0.03"
+            style={{ pointerEvents: 'none' }} />
         )}
 
-        {/* La fléchette : pointe + tige + plumes */}
-        <Dart x={dartPos.x} y={dartPos.y} flying={flying} dragging={dragging} />
+        {/* La fléchette 3D : pointe métal, tige chrome, plumes vert-fluo + ombre */}
+        <Dart x={dartPos.x} y={dartPos.y} scale={dartScale} flying={flying} dragging={dragging} />
       </svg>
     </div>
   );
 }
 
-// Représentation d'une fléchette pointant vers le haut. On la dessine relative à un (x,y).
-function Dart({ x, y, flying, dragging }: { x: number; y: number; flying: boolean; dragging: boolean }) {
-  // Taille de la fléchette
-  const len = 0.34;
-  // Pointe en haut, plumes en bas (pointe vers la cible quand au repos)
-  const tipY = y - len * 0.55;
-  const tailY = y + len * 0.45;
+// Fléchette 3D : pointe chrome + tige métallique + plumes en V avec dégradé.
+// On la dessine centrée sur (0,0) à taille 1 puis on applique translate+scale
+// → permet de la rétrécir naturellement pendant le vol (perspective).
+function Dart({ x, y, scale, flying, dragging }: { x: number; y: number; scale: number; flying: boolean; dragging: boolean }) {
+  const glowFilter = dragging
+    ? 'drop-shadow(0 0 0.04px rgba(214,255,61,0.9)) drop-shadow(0 0.02px 0.02px rgba(0,0,0,0.4))'
+    : flying
+    ? 'drop-shadow(0 0.05px 0.04px rgba(0,0,0,0.6))'
+    : 'drop-shadow(0 0.03px 0.02px rgba(0,0,0,0.45))';
   return (
-    <g style={{ filter: dragging ? 'drop-shadow(0 0 6px rgba(214,255,61,0.6))' : flying ? 'drop-shadow(0 4px 6px rgba(0,0,0,0.5))' : 'none' }}>
-      {/* Tige */}
-      <line x1={x} y1={tipY + 0.02} x2={x} y2={tailY - 0.05}
-        stroke="#cfd1d6" strokeWidth={0.022} strokeLinecap="round" />
-      {/* Pointe */}
+    <g
+      transform={`translate(${x}, ${y}) scale(${scale})`}
+      style={{ filter: glowFilter, transition: dragging ? 'none' : 'transform 0.04s linear', pointerEvents: 'none' }}
+    >
+      {/* Pointe chrome (haut) — fine, longue, métallique */}
       <polygon
-        points={`${x},${tipY} ${x - 0.024},${tipY + 0.07} ${x + 0.024},${tipY + 0.07}`}
-        fill="#d6ff3d" stroke="#7a9b22" strokeWidth={0.005}
+        points="0,-0.20 -0.014,-0.13 0.014,-0.13"
+        fill="url(#dartTip)" stroke="#3a3e44" strokeWidth={0.003}
       />
-      {/* Plumes */}
+      {/* Anneau de transition entre pointe et tige (le "barrel ferrule") */}
+      <ellipse cx="0" cy="-0.128" rx="0.018" ry="0.008" fill="#d8dadf" stroke="#3a3e44" strokeWidth={0.002} />
+      {/* Tige chrome — corps principal */}
+      <rect x="-0.022" y="-0.12" width="0.044" height="0.18" rx="0.012"
+        fill="url(#dartShaft)" stroke="#3a3e44" strokeWidth={0.003} />
+      {/* Bague centrale (knurling) */}
+      <rect x="-0.024" y="-0.06" width="0.048" height="0.018" rx="0.003"
+        fill="#3a3e44" />
+      <rect x="-0.024" y="-0.064" width="0.048" height="0.003" fill="rgba(255,255,255,0.4)" />
+      {/* Plumes en V — deux triangles symétriques avec dégradé pour le relief */}
       <polygon
-        points={`${x},${tailY - 0.06} ${x - 0.06},${tailY} ${x},${tailY - 0.02} ${x + 0.06},${tailY}`}
-        fill="#ff6b57" stroke="#0b0b0e" strokeWidth={0.005}
+        points="0,0.04 -0.07,0.13 0,0.10"
+        fill="url(#dartFletchL)" stroke="#0b0b0e" strokeWidth={0.003}
       />
+      <polygon
+        points="0,0.04 0.07,0.13 0,0.10"
+        fill="url(#dartFletchR)" stroke="#0b0b0e" strokeWidth={0.003}
+      />
+      {/* Nervure centrale des plumes */}
+      <line x1="0" y1="0.04" x2="0" y2="0.105" stroke="#0b0b0e" strokeWidth={0.004} />
+    </g>
+  );
+}
+
+// Dart plantée sur la cible. Look 3D : on voit principalement la queue qui sort
+// du board (puisque la pointe est enfoncée et invisible). Petite ombre portée.
+function StuckDart({ x, y }: { x: number; y: number }) {
+  return (
+    <g transform={`translate(${x}, ${y})`} style={{ pointerEvents: 'none' }}>
+      {/* Ombre portée (la dart fait de l'ombre sur le board, vers la droite-bas) */}
+      <ellipse cx="0.02" cy="0.045" rx="0.05" ry="0.014" fill="rgba(0,0,0,0.5)" />
+      {/* Petit cercle à l'impact (le "trou" dans le board) */}
+      <circle cx="0" cy="0" r="0.008" fill="#000" />
+      {/* Tige courte qui sort de la cible (la pointe est invisible, plantée) */}
+      <rect x="-0.012" y="-0.005" width="0.024" height="0.06" rx="0.006"
+        fill="url(#dartShaft)" stroke="#3a3e44" strokeWidth={0.002} />
+      {/* Plumes (vue de face) */}
+      <polygon points="0,0.04 -0.038,0.08 0,0.065" fill="url(#dartFletchL)" stroke="#0b0b0e" strokeWidth={0.002} />
+      <polygon points="0,0.04 0.038,0.08 0,0.065" fill="url(#dartFletchR)" stroke="#0b0b0e" strokeWidth={0.002} />
+      <line x1="0" y1="0.04" x2="0" y2="0.075" stroke="#0b0b0e" strokeWidth={0.002} />
     </g>
   );
 }
