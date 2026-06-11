@@ -13,6 +13,7 @@ import { LandingPage } from './pages/LandingPage';
 import { JoinByCodePage } from './pages/JoinByCodePage';
 import { BlackjackPage } from './pages/BlackjackPage';
 import { MessagesPage } from './pages/MessagesPage';
+import { AdminPage } from './pages/AdminPage';
 
 export function App() {
   return (
@@ -33,6 +34,7 @@ export function App() {
       <Route path="/messages" element={<RequireAuth><MessagesPage /></RequireAuth>} />
       <Route path="/join/:code" element={<RequireAuth><JoinByCodePage /></RequireAuth>} />
       <Route path="/blackjack" element={<RequireAuth><BlackjackPage /></RequireAuth>} />
+      <Route path="/admin" element={<AdminPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
