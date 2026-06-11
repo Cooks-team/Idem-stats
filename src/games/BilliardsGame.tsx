@@ -1,8 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
 import { useEmotePair } from '../realtime/useEmotePair';
+import { useRemoteGameSync } from '../realtime/useRemoteGameSync';
 import { EmoteBubble } from '../ui/EmoteBubble';
 import { EmotePicker } from '../ui/EmotePicker';
+
+// Clamp anti-cheat : un guest bidouillé pourrait envoyer une vélocité
+// énorme. On plafonne à la même borne MAX_POWER que le host utiliserait.
+function clampVel(v: { x: number; y: number }) {
+  const mag = Math.hypot(v.x, v.y);
+  if (mag <= 18) return v;
+  const k = 18 / mag;
+  return { x: v.x * k, y: v.y * k };
+}
 
 // Billard 8-ball avec les vraies règles :
 //   1. Pile ou face animé pour décider qui commence
@@ -125,6 +135,27 @@ export const BilliardsGame: GameModule = {
   Component: BilliardsComponent,
 };
 
+// ─── Snapshot host→guest pour le remote sync ────────────────────────────
+// L'host est autoritaire : il run la physique, le scoring, les tours, et
+// broadcast un snapshot du monde complet. Le guest n'a aucune simu locale,
+// juste un setState quand un snapshot tombe.
+interface BilliardsSnapshot {
+  balls: Ball[];
+  phase: Phase;
+  currentPlayer: 1 | 2;
+  scores: { p1: number; p2: number };
+  groups: { p1?: Group; p2?: Group };
+  chosenSide: CoinSide | null;
+  flippedSide: CoinSide;
+  endReason: 'eight_correct' | 'eight_wrong' | 'normal';
+  endWinner: 1 | 2 | null;
+}
+// Le guest n'envoie que les shoots (pas l'aim continu — l'host ne le voit
+// pas, c'est juste le visuel local du guest pendant qu'il vise).
+type BilliardsInput =
+  | { type: 'shoot'; cueVel: { x: number; y: number } }
+  | { type: 'callcoin'; side: CoinSide }; // utile si on veut un jour le P2 choisir
+
 function BilliardsComponent({ onFinish, mode = 'local', matchId }: GameProps) {
   const emotes = useEmotePair({ matchId, mode });
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -144,6 +175,70 @@ function BilliardsComponent({ onFinish, mode = 'local', matchId }: GameProps) {
   // Raison de fin de partie pour le message
   const [endReason, setEndReason] = useState<'eight_correct' | 'eight_wrong' | 'normal'>('normal');
   const [endWinner, setEndWinner] = useState<1 | 2 | null>(null);
+
+  // ─── Sync remote ─────────────────────────────────────────────────────
+  // En 'host'  : on garde l'autorité, on broadcast un snapshot après chaque
+  //              changement notable + à 20Hz pendant 'shooting'.
+  // En 'guest' : on reçoit les snapshots et on les applique en bloc, sans
+  //              simulation locale. On n'envoie qu'un shoot intent quand
+  //              c'est notre tour.
+  const finishCalledRef = useRef(false);
+  const { sendInput, sendState } = useRemoteGameSync<BilliardsInput, BilliardsSnapshot>({
+    matchId: matchId ?? null,
+    role: mode,
+    onInput: (input) => {
+      // Host : applique le shoot du guest si c'est son tour (P2)
+      if (input.type === 'shoot') {
+        if (phase !== 'aim' || currentPlayer !== 2) return;
+        const cue = stateRef.current.balls[0];
+        if (!cue.alive) return;
+        // Sanity-clamp la vitesse pour éviter qu'un guest tordu n'envoie
+        // une vélocité énorme.
+        const v = clampVel(input.cueVel);
+        cue.vel.x = v.x;
+        cue.vel.y = v.y;
+        aliveBeforeShotRef.current = stateRef.current.balls.filter((b) => b.id !== 0 && b.alive).length;
+        setPhase('shooting');
+      }
+    },
+    onState: (snap) => {
+      // Guest : remplace tout l'état local
+      stateRef.current.balls = snap.balls.map((b) => ({ ...b, pos: { ...b.pos }, vel: { ...b.vel } }));
+      setPhase(snap.phase);
+      setCurrentPlayer(snap.currentPlayer);
+      setScores(snap.scores);
+      setGroups(snap.groups);
+      setChosenSide(snap.chosenSide);
+      flippedSideRef.current = snap.flippedSide;
+      setEndReason(snap.endReason);
+      setEndWinner(snap.endWinner);
+      redraw();
+    },
+  });
+
+  // Helper qui assemble + broadcast un snapshot. Mémoïsation pas nécessaire
+  // — on est sur quelques appels par tour.
+  function broadcastSnapshot() {
+    if (mode !== 'host') return;
+    sendState({
+      balls: stateRef.current.balls.map((b) => ({ ...b, pos: { ...b.pos }, vel: { ...b.vel } })),
+      phase,
+      currentPlayer,
+      scores,
+      groups,
+      chosenSide,
+      flippedSide: flippedSideRef.current,
+      endReason,
+      endWinner,
+    });
+  }
+  // Sur tout changement d'état React-tracké, on broadcast (utile pour la
+  // transition phase/turn/scores). La boucle physique broadcast en plus
+  // à 20Hz pendant le shooting (cf. plus bas).
+  useEffect(() => {
+    broadcastSnapshot();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, currentPlayer, scores, groups, chosenSide, endReason, endWinner]);
 
   // ─ Phase 'choosing' : on affiche juste la table verte avec la pièce posée
   //   en attendant que J1 clique Pile ou Face. Le dessin se fait via le UI
@@ -211,8 +306,16 @@ function BilliardsComponent({ onFinish, mode = 'local', matchId }: GameProps) {
     return { x, y };
   }
 
+  // En remote, le tour vaut pour QUI peut tirer : host=P1, guest=P2.
+  function canShootNow(): boolean {
+    if (mode === 'local') return true;
+    if (mode === 'host'  && currentPlayer === 1) return true;
+    if (mode === 'guest' && currentPlayer === 2) return true;
+    return false;
+  }
   function onPointerDown(e: React.PointerEvent<HTMLCanvasElement>) {
     if (phase !== 'aim') return;
+    if (!canShootNow()) return;
     const cue = stateRef.current.balls[0];
     if (!cue.alive) return;
     e.currentTarget.setPointerCapture(e.pointerId);
@@ -238,8 +341,16 @@ function BilliardsComponent({ onFinish, mode = 'local', matchId }: GameProps) {
     }
     const power = Math.min(MAX_POWER, dist * POWER_SCALE);
     const k = power / dist;
-    cue.vel.x = dx * k;
-    cue.vel.y = dy * k;
+    const velX = dx * k;
+    const velY = dy * k;
+    // Guest : on n'applique pas localement, on envoie au host qui validera
+    // et broadcast l'état initial du shot. Évite la divergence client/server.
+    if (mode === 'guest') {
+      sendInput({ type: 'shoot', cueVel: { x: velX, y: velY } });
+      return;
+    }
+    cue.vel.x = velX;
+    cue.vel.y = velY;
     aliveBeforeShotRef.current = stateRef.current.balls.filter((b) => b.id !== 0 && b.alive).length;
     setPhase('shooting');
   }
@@ -255,10 +366,29 @@ function BilliardsComponent({ onFinish, mode = 'local', matchId }: GameProps) {
   // ─ Physique ──────────────────────────────────────────────────────────────
   useEffect(() => {
     if (phase !== 'shooting') return;
+    // En guest : on ne simule PAS. On attend les snapshots du host qui
+    // tomberont via onState → setPhase + balls + tout. Double simulation
+    // = divergence garantie.
+    if (mode === 'guest') return;
+    let frameCount = 0;
     const interval = window.setInterval(() => {
       const s = stateRef.current;
       stepBalls(s.balls);
       redraw();
+      // Host broadcast à ~20Hz (tous les 3 ticks de la boucle à 60fps)
+      if (mode === 'host' && (frameCount++ & 0x3) === 0) {
+        sendState({
+          balls: s.balls.map((b) => ({ ...b, pos: { ...b.pos }, vel: { ...b.vel } })),
+          phase: 'shooting',
+          currentPlayer,
+          scores,
+          groups,
+          chosenSide,
+          flippedSide: flippedSideRef.current,
+          endReason,
+          endWinner,
+        });
+      }
 
       const stopped = s.balls.every((b) => !b.alive || (Math.abs(b.vel.x) < 0.001 && Math.abs(b.vel.y) < 0.001));
       if (!stopped) return;
@@ -324,7 +454,13 @@ function BilliardsComponent({ onFinish, mode = 'local', matchId }: GameProps) {
         const loserPots = winnerKey === myKey ? otherPots : myPots;
         const sc1 = winner === 1 ? 100 + winnerPots : loserPots;
         const sc2 = winner === 2 ? 100 + winnerPots : loserPots;
-        setTimeout(() => onFinish(sc1, sc2), 1500);
+        // En remote, seul le host arrive ici (le guest a return tôt avant
+        // la simu physique). Ref-guard pour éviter un double onFinish si
+        // un autre tick post-mat re-rentre.
+        if (!finishCalledRef.current) {
+          finishCalledRef.current = true;
+          setTimeout(() => onFinish(sc1, sc2), 1500);
+        }
         return;
       }
 

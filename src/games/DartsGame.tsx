@@ -1,8 +1,24 @@
 import { useEffect, useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
 import { useEmotePair } from '../realtime/useEmotePair';
+import { useRemoteGameSync } from '../realtime/useRemoteGameSync';
 import { EmoteBubble } from '../ui/EmoteBubble';
 import { EmotePicker } from '../ui/EmotePicker';
+
+// ─── Sync host-authoritative ────────────────────────────────────────────
+// Le guest envoie son impact (x,y) au host, qui calcule le score, met à
+// jour scores/turn/turnHits/allHits et broadcast un snapshot complet. Le
+// guest ne calcule rien — il rend juste ce que l'host pousse + joue son
+// animation de fléchette locale (cosmétique).
+interface DartsSnapshot {
+  scores: { p1: number; p2: number };
+  turn: 1 | 2;
+  turnHits: Hit[];
+  allHits: Hit[];
+  phase: 'playing' | 'done';
+  busted: boolean;
+}
+type DartsInput = { type: 'throw'; x: number; y: number };
 
 // Fléchettes — mécanique 501 façon Plato avec SLIDE TO THROW.
 //   - Une fléchette posée en bas du board, visible dans la zone "ready"
@@ -60,6 +76,17 @@ export const DartsGame: GameModule = {
 
 function DartsComponent({ onFinish, mode = 'local', matchId }: GameProps) {
   const emotes = useEmotePair({ matchId, mode });
+  const finishCalledRef = useRef(false);
+
+  // canThrowNow : seulement le joueur dont c'est le tour peut lancer.
+  // Convention : host = J1, guest = J2.
+  // (Déclaré plus bas après le useState de turn — TS l'autorise via hoisting.)
+  function canThrowNow(): boolean {
+    if (mode === 'local') return true;
+    if (mode === 'host'  && turn === 1) return true;
+    if (mode === 'guest' && turn === 2) return true;
+    return false;
+  }
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [scores, setScores] = useState({ p1: START_SCORE, p2: START_SCORE });
   const [turn, setTurn] = useState<1 | 2>(1);
@@ -82,7 +109,10 @@ function DartsComponent({ onFinish, mode = 'local', matchId }: GameProps) {
   // Historique des positions pendant le drag → utilisé pour estimer la vitesse à la release
   const dragHistoryRef = useRef<Array<{ pos: V2; t: number }>>([]);
 
-  const canThrow = phase === 'playing' && !busted && !flying;
+  // En remote, on bloque la dart si ce n'est pas son tour. Le canThrowNow
+  // a accès à `turn` qui est le state ci-dessus — il est déclaré plus haut
+  // mais lit la closure courante via le re-render.
+  const canThrow = phase === 'playing' && !busted && !flying && canThrowNow();
 
   function svgPointFromClient(clientX: number, clientY: number): V2 {
     const svg = svgRef.current;
@@ -185,7 +215,50 @@ function DartsComponent({ onFinish, mode = 'local', matchId }: GameProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flying]);
 
+  // Sync remote : le guest envoie sa fléchette au host plutôt que de la
+  // valider lui-même. Le host est seul maître du score / turn / done.
+  const { sendInput, sendState } = useRemoteGameSync<DartsInput, DartsSnapshot>({
+    matchId: matchId ?? null,
+    role: mode,
+    onInput: (input) => {
+      // Host valide : c'est le tour du guest (J2) et la phase joue
+      if (phase !== 'playing') return;
+      if (turn !== 2) return;
+      applyHit({ x: input.x, y: input.y });
+    },
+    onState: (snap) => {
+      setScores(snap.scores);
+      setTurn(snap.turn);
+      setTurnHits(snap.turnHits);
+      setAllHits(snap.allHits);
+      setPhase(snap.phase);
+      setBusted(snap.busted);
+    },
+  });
+  function broadcastSnapshot(over?: Partial<DartsSnapshot>) {
+    if (mode !== 'host') return;
+    sendState({
+      scores, turn, turnHits, allHits, phase, busted,
+      ...over,
+    });
+  }
+  // En remote, l'host pousse un snapshot à chaque changement.
+  useEffect(() => {
+    broadcastSnapshot();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scores, turn, turnHits, allHits, phase, busted]);
+
   function applyHit(at: V2) {
+    // En guest : on n'applique RIEN localement. L'animation de la dart
+    // a déjà tourné côté guest, mais le scoring est exclusif au host. On
+    // envoie l'intent et on attend le snapshot retour.
+    if (mode === 'guest') {
+      setFlying(null);
+      setDartPos({ x: DART_REST_X, y: DART_REST_Y });
+      setDartScale(1.0);
+      sendInput({ type: 'throw', x: at.x, y: at.y });
+      return;
+    }
     const hit = scoreFromPoint(at.x, at.y);
     const fullHit: Hit = { ...hit, x: at.x, y: at.y };
     setAllHits((prev) => [...prev, fullHit]);
@@ -224,11 +297,17 @@ function DartsComponent({ onFinish, mode = 'local', matchId }: GameProps) {
     // WIN
     if (newScore === 0) {
       setPhase('done');
-      setTimeout(() => {
-        const sc1 = turn === 1 ? START_SCORE : START_SCORE - scores.p1;
-        const sc2 = turn === 2 ? START_SCORE : START_SCORE - scores.p2;
-        onFinish(sc1, sc2);
-      }, 900);
+      // En remote, seul l'host arrive ici (le guest a return tôt avant).
+      // Guard ref : évite un double onFinish si plusieurs ticks/effects
+      // re-rentrent au même moment.
+      if (!finishCalledRef.current) {
+        finishCalledRef.current = true;
+        setTimeout(() => {
+          const sc1 = turn === 1 ? START_SCORE : START_SCORE - scores.p1;
+          const sc2 = turn === 2 ? START_SCORE : START_SCORE - scores.p2;
+          onFinish(sc1, sc2);
+        }, 900);
+      }
       return;
     }
 
