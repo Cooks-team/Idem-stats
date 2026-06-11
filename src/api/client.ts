@@ -1,5 +1,5 @@
 // Mince wrapper fetch : ajoute Bearer si dispo, sérialise JSON, jette une ApiError typée.
-import type { AuthResponse, BadgesResponse, BlackjackRoundResponse, ConversationSummary, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, Message, ShifumiPick, User, WallOfShameResponse } from './types';
+import type { AuthResponse, BadgesResponse, BlackjackRoundResponse, ConversationSummary, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, Message, ShifumiPick, User, WallOfShameResponse, AdminTask } from './types';
 
 const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 export const API_BASE_URL = BASE;
@@ -173,4 +173,17 @@ export const api = {
   // Emote relay — déclenche un emote chez l'adversaire pendant un match remote.
   sendEmote: (matchId: string, key: string) =>
     call<{ ok: true }>(`/matches/${matchId}/emote`, { method: 'POST', body: JSON.stringify({ key }) }),
+
+  // Admin todo board (réservé aux comptes admins côté serveur)
+  adminListTasks: () => call<{ admins: User[]; tasks: AdminTask[] }>('/admin/tasks'),
+  adminCreateTask: (title: string, assigneeId: string) =>
+    call<AdminTask>('/admin/tasks', { method: 'POST', body: JSON.stringify({ title, assigneeId }) }),
+  adminUpdateTask: (id: string, patch: { title?: string; done?: boolean; assigneeId?: string }) =>
+    call<AdminTask>(`/admin/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  adminDeleteTask: (id: string) =>
+    call<{ ok: true }>(`/admin/tasks/${id}`, { method: 'DELETE' }),
+  adminAddComment: (id: string, text: string) =>
+    call<AdminTask>(`/admin/tasks/${id}/comments`, { method: 'POST', body: JSON.stringify({ text }) }),
+  adminDeleteComment: (id: string, commentId: string) =>
+    call<AdminTask>(`/admin/tasks/${id}/comments/${commentId}`, { method: 'DELETE' }),
 };

@@ -211,3 +211,19 @@ export interface ConversationSummary {
   lastMessage: Message | null;
   unread: number;
 }
+
+export interface AdminComment {
+  id: string;
+  authorId: string;
+  authorPseudo: string;
+  text: string;
+  createdAt: string;
+}
+export interface AdminTask {
+  id: string;
+  title: string;
+  assigneeId: string;
+  done: boolean;
+  createdAt: string;
+  comments: AdminComment[];
+}

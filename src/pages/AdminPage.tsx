@@ -1,44 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import { api, ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { Avatar } from '../ui/Avatar';
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Page admin /admin — verrouillée par mot de passe, tableau de tâches partagé
-// entre les deux admins (Jayson + toi) avec commentaires.
-//
-// ⚠️ Stockage LOCAL (localStorage) : les tâches persistent dans CE navigateur
-// mais ne se synchronisent PAS entre toi et Jayson. Pour un vrai partage + un
-// mot de passe vérifié côté serveur, voir la note en bas du chat (prompt Claude
-// Code pour le backend).
-// ─────────────────────────────────────────────────────────────────────────────
+import type { AdminTask, User } from '../api/types';
 
 const PASSWORD = 'gigagwer';
 const UNLOCK_KEY = 'podium.admin.unlocked';
-const STORE_KEY = 'podium.admin.todos.v1';
 
-type Assignee = 'jayson' | 'me';
+const CODES: Record<string, number> = { cooks: 100 };
 
-interface Comment { id: string; author: string; text: string; at: number; }
-interface Task {
-    id: string;
-    title: string;
-    assignee: Assignee;
-    done: boolean;
-    at: number;
-    comments: Comment[];
-}
-
-function uid(): string {
-    return (globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-}
-function loadTasks(): Task[] {
-    try { return JSON.parse(localStorage.getItem(STORE_KEY) || '[]') as Task[]; }
-    catch { return []; }
-}
-function saveTasks(tasks: Task[]) {
-    try { localStorage.setItem(STORE_KEY, JSON.stringify(tasks)); } catch { /* quota */ }
-}
+const COL_TONES = ['var(--blue)', 'var(--accent)', 'var(--gold)', 'var(--loss)'];
 
 export function AdminPage() {
     const [unlocked, setUnlocked] = useState(() => {
@@ -102,32 +75,63 @@ function Lock({ onUnlock }: { onUnlock: () => void }) {
     );
 }
 
-// ── Tableau ──────────────────────────────────────────────────────────────────
+// ── Tableau (données API) ─────────────────────────────────────────────────────
 function Board({ onLock }: { onLock: () => void }) {
     const nav = useNavigate();
-    const { user } = useAuth();
-    const myName = user?.pseudo ?? 'Moi';
+    const { user, setUser } = useAuth();
+    const qc = useQueryClient();
 
-    const [tasks, setTasks] = useState<Task[]>(() => loadTasks());
-    useEffect(() => { saveTasks(tasks); }, [tasks]);
+    const { data, isLoading, error } = useQuery({
+        queryKey: ['admin', 'tasks'],
+        queryFn: () => api.adminListTasks(),
+        refetchInterval: 3000,
+        refetchOnWindowFocus: true,
+        retry: false,
+    });
+    const refresh = () => qc.invalidateQueries({ queryKey: ['admin', 'tasks'] });
+
+    const admins: User[] = data?.admins ?? [];
+    const tasks: AdminTask[] = data?.tasks ?? [];
 
     const [draft, setDraft] = useState('');
-    const [draftAssignee, setDraftAssignee] = useState<Assignee>('me');
+    const [draftAssignee, setDraftAssignee] = useState<string>('');
+    // Par défaut, on s'assigne la tâche à soi-même une fois les admins chargés.
+    useEffect(() => {
+        if (!draftAssignee && admins.length) {
+            setDraftAssignee(user?.id && admins.some((a) => a.id === user.id) ? user.id : admins[0].id);
+        }
+    }, [admins, draftAssignee, user]);
+
+    const createMut = useMutation({
+        mutationFn: () => api.adminCreateTask(draft.trim(), draftAssignee),
+        onSuccess: () => { setDraft(''); refresh(); },
+    });
+    const updateMut = useMutation({
+        mutationFn: (v: { id: string; patch: Partial<Pick<AdminTask, 'title' | 'done' | 'assigneeId'>> }) => api.adminUpdateTask(v.id, v.patch),
+        onSuccess: refresh,
+    });
+    const deleteMut = useMutation({ mutationFn: (id: string) => api.adminDeleteTask(id), onSuccess: refresh });
+    const addCommentMut = useMutation({
+        mutationFn: (v: { id: string; text: string }) => api.adminAddComment(v.id, v.text),
+        onSuccess: refresh,
+    });
+    const delCommentMut = useMutation({
+        mutationFn: (v: { id: string; cid: string }) => api.adminDeleteComment(v.id, v.cid),
+        onSuccess: refresh,
+    });
+
+    const notAdmin = error instanceof ApiError && (error.status === 403 || error.message === 'not_admin');
 
     function addTask() {
-        const title = draft.trim();
-        if (!title) return;
-        setTasks((t) => [{ id: uid(), title, assignee: draftAssignee, done: false, at: Date.now(), comments: [] }, ...t]);
-        setDraft('');
+        if (!draft.trim() || !draftAssignee) return;
+        createMut.mutate();
     }
-    const update = (id: string, fn: (t: Task) => Task) =>
-        setTasks((list) => list.map((t) => (t.id === id ? fn(t) : t)));
-    const remove = (id: string) => setTasks((list) => list.filter((t) => t.id !== id));
-
-    const columns: Array<{ key: Assignee; name: string; tone: string; seed: string }> = [
-        { key: 'jayson', name: 'Jayson', tone: 'var(--blue)', seed: 'Jayson' },
-        { key: 'me', name: myName, tone: 'var(--accent)', seed: myName },
-    ];
+    function reassign(t: AdminTask) {
+        if (admins.length < 2) return;
+        const i = admins.findIndex((a) => a.id === t.assigneeId);
+        const next = admins[(i + 1) % admins.length];
+        updateMut.mutate({ id: t.id, patch: { assigneeId: next.id } });
+    }
 
     return (
         <>
@@ -142,67 +146,135 @@ function Board({ onLock }: { onLock: () => void }) {
                 </div>
             </div>
 
-            {/* Composer */}
-            <div className="panel admin-composer">
-                <input
-                    className="admin-composer-input"
-                    value={draft}
-                    placeholder="Nouvelle tâche…"
-                    onChange={(e) => setDraft(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && addTask()}
-                />
-                <div className="admin-composer-pick">
-                    <button className={`chip ${draftAssignee === 'jayson' ? 'active' : ''}`} onClick={() => setDraftAssignee('jayson')}>Jayson</button>
-                    <button className={`chip ${draftAssignee === 'me' ? 'active accent' : ''}`} onClick={() => setDraftAssignee('me')}>{myName}</button>
+            {notAdmin ? (
+                <div className="panel" style={{ textAlign: 'center', color: 'var(--loss)', padding: 28 }}>
+                    Ton compte connecté n'est pas dans la liste des admins. Connecte-toi avec un compte admin.
                 </div>
-                <button className="btn btn-accent" onClick={addTask} disabled={!draft.trim()}>Ajouter</button>
-            </div>
+            ) : isLoading && !data ? (
+                <div className="panel" style={{ textAlign: 'center', color: 'var(--muted)' }}>Chargement…</div>
+            ) : (
+                <>
+                    {/* Composer */}
+                    <div className="panel admin-composer">
+                        <input
+                            className="admin-composer-input"
+                            value={draft}
+                            placeholder="Nouvelle tâche…"
+                            onChange={(e) => setDraft(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && addTask()}
+                        />
+                        <div className="admin-composer-pick">
+                            {admins.map((a) => (
+                                <button
+                                    key={a.id}
+                                    className={`chip ${draftAssignee === a.id ? 'active accent' : ''}`}
+                                    onClick={() => setDraftAssignee(a.id)}
+                                >{a.pseudo}</button>
+                            ))}
+                        </div>
+                        <button className="btn btn-accent" onClick={addTask} disabled={!draft.trim() || createMut.isPending}>
+                            {createMut.isPending ? '…' : 'Ajouter'}
+                        </button>
+                    </div>
 
-            {/* Colonnes */}
-            <div className="admin-cols">
-                {columns.map((col) => (
-                    <Column
-                        key={col.key}
-                        col={col}
-                        tasks={tasks.filter((t) => t.assignee === col.key)}
-                        myName={myName}
-                        onToggle={(id) => update(id, (t) => ({ ...t, done: !t.done }))}
-                        onDelete={remove}
-                        onReassign={(id) => update(id, (t) => ({ ...t, assignee: t.assignee === 'jayson' ? 'me' : 'jayson' }))}
-                        onAddComment={(id, text) => update(id, (t) => ({
-                            ...t, comments: [...t.comments, { id: uid(), author: myName, text, at: Date.now() }],
-                        }))}
-                        onDeleteComment={(id, cid) => update(id, (t) => ({
-                            ...t, comments: t.comments.filter((c) => c.id !== cid),
-                        }))}
-                    />
-                ))}
-            </div>
+                    {/* Colonnes = admins */}
+                    <div className="admin-cols" style={{ gridTemplateColumns: `repeat(${Math.max(1, admins.length)}, 1fr)` }}>
+                        {admins.map((admin, idx) => (
+                            <Column
+                                key={admin.id}
+                                admin={admin}
+                                tone={COL_TONES[idx % COL_TONES.length]}
+                                tasks={tasks.filter((t) => t.assigneeId === admin.id)}
+                                onToggle={(t) => updateMut.mutate({ id: t.id, patch: { done: !t.done } })}
+                                onDelete={(t) => deleteMut.mutate(t.id)}
+                                onReassign={reassign}
+                                onAddComment={(t, text) => addCommentMut.mutate({ id: t.id, text })}
+                                onDeleteComment={(t, cid) => delCommentMut.mutate({ id: t.id, cid })}
+                            />
+                        ))}
+                    </div>
+                </>
+            )}
+
+            {/* Barre "code" cachée — quasi invisible, s'éclaire au survol/focus */}
+            <CodeBar
+                currentCoins={user?.coins ?? 0}
+                onGranted={(coins) => { if (user) setUser({ ...user, coins }); }}
+            />
         </>
     );
 }
 
-function Column({ col, tasks, myName, onToggle, onDelete, onReassign, onAddComment, onDeleteComment }: {
-    col: { key: Assignee; name: string; tone: string; seed: string };
-    tasks: Task[];
-    myName: string;
-    onToggle: (id: string) => void;
-    onDelete: (id: string) => void;
-    onReassign: (id: string) => void;
-    onAddComment: (id: string, text: string) => void;
-    onDeleteComment: (id: string, cid: string) => void;
+// ── Barre cachée pour les codes (ex : "cooks" → +100 coins) ───────────────────
+function CodeBar({ currentCoins, onGranted }: { currentCoins: number; onGranted: (coins: number) => void }) {
+    const [code, setCode] = useState('');
+    const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+
+    const grantMut = useMutation({
+        // Crédit via le règlement de manche blackjack : mise 0, gain = amount.
+        mutationFn: (amount: number) => api.blackjackRound(0, amount),
+        onSuccess: (d, amount) => {
+            onGranted(d.coins);
+            setMsg({ ok: true, text: `+${amount} 🪙 crédités (solde : ${d.coins})` });
+            setCode('');
+        },
+        onError: () => setMsg({ ok: false, text: 'Échec du crédit — le serveur a refusé (voir note).' }),
+    });
+
+    function submit() {
+        const key = code.trim().toLowerCase();
+        const amount = CODES[key];
+        if (!amount) { setMsg({ ok: false, text: 'Code invalide.' }); return; }
+        setMsg(null);
+        grantMut.mutate(amount);
+    }
+
+    return (
+        <div className="admin-codebar">
+            <span className="admin-codebar-key">🔑</span>
+            <input
+                className="admin-codebar-input"
+                value={code}
+                placeholder="code…"
+                spellCheck={false}
+                autoComplete="off"
+                onChange={(e) => { setCode(e.target.value); setMsg(null); }}
+                onKeyDown={(e) => e.key === 'Enter' && submit()}
+            />
+            <button className="btn btn-line btn-sm" onClick={submit} disabled={!code.trim() || grantMut.isPending}>
+                {grantMut.isPending ? '…' : 'OK'}
+            </button>
+            {msg && (
+                <span className="admin-codebar-msg" style={{ color: msg.ok ? 'var(--win)' : 'var(--loss)' }}>
+                    {msg.text}
+                </span>
+            )}
+            <span className="admin-codebar-balance">solde : {currentCoins} 🪙</span>
+        </div>
+    );
+}
+
+function Column({ admin, tone, tasks, onToggle, onDelete, onReassign, onAddComment, onDeleteComment }: {
+    admin: User;
+    tone: string;
+    tasks: AdminTask[];
+    onToggle: (t: AdminTask) => void;
+    onDelete: (t: AdminTask) => void;
+    onReassign: (t: AdminTask) => void;
+    onAddComment: (t: AdminTask, text: string) => void;
+    onDeleteComment: (t: AdminTask, cid: string) => void;
 }) {
-    // Tâches non faites d'abord, puis les faites (dimmées), chacune triée récent → vieux.
-    const sorted = useMemo(() => {
-        return [...tasks].sort((a, b) => Number(a.done) - Number(b.done) || b.at - a.at);
-    }, [tasks]);
+    const sorted = useMemo(
+        () => [...tasks].sort((a, b) => Number(a.done) - Number(b.done) || (b.createdAt < a.createdAt ? -1 : 1)),
+        [tasks],
+    );
     const doneCount = tasks.filter((t) => t.done).length;
 
     return (
-        <div className="admin-col" style={{ ['--col-tone' as string]: col.tone }}>
+        <div className="admin-col" style={{ ['--col-tone' as string]: tone }}>
             <div className="admin-col-head">
-                <Avatar seed={col.seed} size={32} ring ringColor={col.tone} />
-                <div className="admin-col-name">{col.name}</div>
+                <Avatar seed={admin.pseudo} size={32} ring ringColor={tone} />
+                <div className="admin-col-name">{admin.pseudo}</div>
                 <div className="admin-col-count">{tasks.length - doneCount} à faire · {doneCount} OK</div>
             </div>
 
@@ -211,12 +283,12 @@ function Column({ col, tasks, myName, onToggle, onDelete, onReassign, onAddComme
                     <div className="admin-empty">Aucune tâche ici.</div>
                 ) : sorted.map((t) => (
                     <TaskCard
-                        key={t.id} task={t} otherName={col.key === 'me' ? 'Jayson' : myName}
-                        onToggle={() => onToggle(t.id)}
-                        onDelete={() => onDelete(t.id)}
-                        onReassign={() => onReassign(t.id)}
-                        onAddComment={(text) => onAddComment(t.id, text)}
-                        onDeleteComment={(cid) => onDeleteComment(t.id, cid)}
+                        key={t.id} task={t}
+                        onToggle={() => onToggle(t)}
+                        onDelete={() => onDelete(t)}
+                        onReassign={() => onReassign(t)}
+                        onAddComment={(text) => onAddComment(t, text)}
+                        onDeleteComment={(cid) => onDeleteComment(t, cid)}
                     />
                 ))}
             </div>
@@ -224,9 +296,8 @@ function Column({ col, tasks, myName, onToggle, onDelete, onReassign, onAddComme
     );
 }
 
-function TaskCard({ task, otherName, onToggle, onDelete, onReassign, onAddComment, onDeleteComment }: {
-    task: Task;
-    otherName: string;
+function TaskCard({ task, onToggle, onDelete, onReassign, onAddComment, onDeleteComment }: {
+    task: AdminTask;
     onToggle: () => void;
     onDelete: () => void;
     onReassign: () => void;
@@ -251,7 +322,7 @@ function TaskCard({ task, otherName, onToggle, onDelete, onReassign, onAddCommen
                     {task.done ? '✓' : ''}
                 </button>
                 <div className="admin-task-title">{task.title}</div>
-                <button className="admin-icon" title={`Réassigner à ${otherName}`} onClick={onReassign}>⇄</button>
+                <button className="admin-icon" title="Réassigner à l'autre admin" onClick={onReassign}>⇄</button>
                 <button className="admin-icon danger" title="Supprimer" onClick={onDelete}>×</button>
             </div>
 
@@ -259,7 +330,7 @@ function TaskCard({ task, otherName, onToggle, onDelete, onReassign, onAddCommen
                 <button className="admin-comments-toggle" onClick={() => setOpen((v) => !v)}>
                     💬 {task.comments.length} commentaire{task.comments.length > 1 ? 's' : ''}
                 </button>
-                <span className="admin-task-date">{fmt(task.at)}</span>
+                <span className="admin-task-date">{fmt(task.createdAt)}</span>
             </div>
 
             {open && (
@@ -267,7 +338,7 @@ function TaskCard({ task, otherName, onToggle, onDelete, onReassign, onAddCommen
                     {task.comments.map((c) => (
                         <div key={c.id} className="admin-comment">
                             <div className="admin-comment-meta">
-                                <strong>{c.author}</strong> · {fmt(c.at)}
+                                <strong>{c.authorPseudo}</strong> · {fmt(c.createdAt)}
                                 <button className="admin-comment-del" onClick={() => onDeleteComment(c.id)}>supprimer</button>
                             </div>
                             <div className="admin-comment-text">{c.text}</div>
@@ -289,8 +360,8 @@ function TaskCard({ task, otherName, onToggle, onDelete, onReassign, onAddCommen
     );
 }
 
-function fmt(ts: number): string {
-    const d = new Date(ts);
+function fmt(iso: string): string {
+    const d = new Date(iso);
     const today = new Date();
     const sameDay = d.toDateString() === today.toDateString();
     return sameDay
@@ -330,10 +401,10 @@ const ADMIN_CSS = `
   border-radius: 12px; padding: 12px 14px; color: var(--text); font-size: 15px; outline: none;
 }
 .admin-composer-input:focus { border-color: var(--accent); }
-.admin-composer-pick { display: flex; gap: 8px; }
+.admin-composer-pick { display: flex; gap: 8px; flex-wrap: wrap; }
 
 /* Colonnes */
-.admin-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.admin-cols { display: grid; gap: 16px; align-items: start; }
 .admin-col { border: 1px solid var(--line); border-radius: var(--r); background: color-mix(in srgb, var(--surface) 55%, var(--bg)); overflow: hidden; }
 .admin-col-head {
   display: flex; align-items: center; gap: 10px; padding: 14px 16px;
@@ -392,8 +463,23 @@ const ADMIN_CSS = `
 }
 .admin-comment-add input:focus { border-color: var(--accent); }
 
+/* Barre code cachée */
+.admin-codebar {
+  margin-top: 44px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  opacity: .18; transition: opacity .25s;
+}
+.admin-codebar:hover, .admin-codebar:focus-within { opacity: 1; }
+.admin-codebar-key { font-size: 13px; }
+.admin-codebar-input {
+  width: 130px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 9px;
+  padding: 7px 10px; color: var(--text); font-size: 13px; outline: none;
+}
+.admin-codebar-input:focus { border-color: var(--accent); }
+.admin-codebar-msg { font-size: 12.5px; font-weight: 600; }
+.admin-codebar-balance { margin-left: auto; font-size: 11.5px; color: var(--muted); }
+
 @media (max-width: 768px) {
-  .admin-cols { grid-template-columns: 1fr; }
+  .admin-cols { grid-template-columns: 1fr !important; }
   .admin-wrap { padding: 22px 16px 60px; }
 }
 @media (prefers-reduced-motion: reduce) {
