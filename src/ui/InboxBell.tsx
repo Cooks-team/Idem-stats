@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { absoluteAvatar, api } from '../api/client';
@@ -95,56 +95,101 @@ export function InboxBell() {
             </div>
           )}
 
-          {data?.friendRequests.map((r) => (
-            <Row key={`fr-${r.id}`}
-              avatar={<Avatar seed={r.user.pseudo} size={36} imageUrl={absoluteAvatar(r.user.avatarUrl)} />}
-              title={<><strong>{r.user.pseudo}</strong> veut être ton ami</>}
-              sub="Demande d'amitié"
-              actions={
-                <>
-                  <button className="btn btn-accent btn-sm" disabled={acceptFriendMut.isPending} onClick={() => acceptFriendMut.mutate(r.id)}>Accepter</button>
-                  <button className="btn btn-line btn-sm" disabled={declineFriendMut.isPending} onClick={() => declineFriendMut.mutate(r.id)}>Refuser</button>
-                </>
-              }
-            />
-          ))}
+          {/* Tout est wrappé dans un ErrorBoundary : un item BDD orphelin (ex.
+              friendRequest dont le requester a été supprimé en cascade incomplète)
+              faisait crasher tout le React tree → écran noir intégral. Le
+              boundary attrape l'erreur et n'écrase plus que la liste. */}
+          <InboxErrorBoundary>
+            {data?.friendRequests
+              ?.filter((r) => r && r.user && r.user.pseudo)
+              .map((r) => (
+                <Row key={`fr-${r.id}`}
+                  avatar={<Avatar seed={r.user.pseudo} size={36} imageUrl={absoluteAvatar(r.user.avatarUrl)} />}
+                  title={<><strong>{r.user.pseudo}</strong> veut être ton ami</>}
+                  sub="Demande d'amitié"
+                  actions={
+                    <>
+                      <button className="btn btn-accent btn-sm" disabled={acceptFriendMut.isPending} onClick={() => acceptFriendMut.mutate(r.id)}>Accepter</button>
+                      <button className="btn btn-line btn-sm" disabled={declineFriendMut.isPending} onClick={() => declineFriendMut.mutate(r.id)}>Refuser</button>
+                    </>
+                  }
+                />
+              ))}
 
-          {data?.matchInvites.map((m) => {
-            const other = m.player1;
-            return (
-              <Row key={`mi-${m.id}`}
-                avatar={<Avatar seed={other?.pseudo ?? '?'} size={36} imageUrl={absoluteAvatar(other?.avatarUrl)} />}
-                title={<><strong>{other?.pseudo}</strong> te défie</>}
-                sub={`${displayGame(m.game)} · invitation`}
-                actions={
-                  <>
-                    <button className="btn btn-accent btn-sm" disabled={acceptMatchMut.isPending} onClick={() => acceptMatchMut.mutate(m.id)}>Accepter</button>
-                    <button className="btn btn-line btn-sm" disabled={declineMatchMut.isPending} onClick={() => declineMatchMut.mutate(m.id)}>Refuser</button>
-                  </>
-                }
-              />
-            );
-          })}
+            {data?.matchInvites
+              ?.filter((m) => m && m.player1 && m.player1.pseudo)
+              .map((m) => {
+                const other = m.player1!;
+                return (
+                  <Row key={`mi-${m.id}`}
+                    avatar={<Avatar seed={other.pseudo} size={36} imageUrl={absoluteAvatar(other.avatarUrl)} />}
+                    title={<><strong>{other.pseudo}</strong> te défie</>}
+                    sub={`${displayGame(m.game)} · invitation`}
+                    actions={
+                      <>
+                        <button className="btn btn-accent btn-sm" disabled={acceptMatchMut.isPending} onClick={() => acceptMatchMut.mutate(m.id)}>Accepter</button>
+                        <button className="btn btn-line btn-sm" disabled={declineMatchMut.isPending} onClick={() => declineMatchMut.mutate(m.id)}>Refuser</button>
+                      </>
+                    }
+                  />
+                );
+              })}
 
-          {data?.shifumiPendingPicks.map((m) => {
-            const other = m.player1; // dans inbox, le challenge vient de player1
-            return (
-              <Row key={`sh-${m.id}`}
-                avatar={<Avatar seed={other?.pseudo ?? '?'} size={36} imageUrl={absoluteAvatar(other?.avatarUrl)} />}
-                title={<><strong>{other?.pseudo}</strong> attend ton choix</>}
-                sub="🪨 Shifumi à distance"
-                actions={
-                  <button className="btn btn-accent btn-sm" onClick={() => { setOpen(false); nav(`/matches/${m.id}`); }}>
-                    Pioche
-                  </button>
-                }
-              />
-            );
-          })}
+            {data?.shifumiPendingPicks
+              ?.filter((m) => m && m.player1 && m.player1.pseudo)
+              .map((m) => {
+                const other = m.player1!;
+                return (
+                  <Row key={`sh-${m.id}`}
+                    avatar={<Avatar seed={other.pseudo} size={36} imageUrl={absoluteAvatar(other.avatarUrl)} />}
+                    title={<><strong>{other.pseudo}</strong> attend ton choix</>}
+                    sub="🪨 Shifumi à distance"
+                    actions={
+                      <button className="btn btn-accent btn-sm" onClick={() => { setOpen(false); nav(`/matches/${m.id}`); }}>
+                        Pioche
+                      </button>
+                    }
+                  />
+                );
+              })}
+          </InboxErrorBoundary>
         </div>
       )}
     </div>
   );
+}
+
+// ErrorBoundary local — empêche un item malformé (ex. relation BDD orpheline)
+// de crasher toute l'app. Affiche un message clair et un bouton de retry.
+class InboxErrorBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { error: null };
+  }
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+  componentDidCatch(error: Error) {
+    // eslint-disable-next-line no-console
+    console.error('[InboxBell] crash dans le rendu de la liste:', error);
+  }
+  render() {
+    if (this.state.error) {
+      return (
+        <div style={{ padding: 16, color: 'var(--loss)', fontSize: 12, lineHeight: 1.5 }}>
+          Impossible d'afficher la liste : un item est mal formé.<br />
+          <button
+            className="btn btn-line btn-sm"
+            style={{ marginTop: 8 }}
+            onClick={() => this.setState({ error: null })}
+          >
+            Réessayer
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
 }
 
 function Row({ avatar, title, sub, actions }: {
