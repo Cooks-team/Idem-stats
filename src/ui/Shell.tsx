@@ -9,6 +9,8 @@ import { InboxBell } from './InboxBell';
 import { BreakingNewsTicker } from './BreakingNewsTicker';
 import { useEvents } from '../realtime/useEvents';
 
+const ADMIN_PSEUDOS = ['Mulien', 'Canigwestre'];
+
 // Shell desktop + mobile : Sidebar (drawer sur mobile) + Topbar + Content.
 export function Shell({ title, subtitle, children, onBack, action }: {
   title: string;
@@ -28,7 +30,7 @@ export function Shell({ title, subtitle, children, onBack, action }: {
   // Ferme le drawer à chaque changement de route
   useEffect(() => { setDrawerOpen(false); }, [loc.pathname]);
 
-  const items: Array<{ to: string; icon: 'trophy' | 'grid' | 'pulse' | 'user' | 'users' | 'chat' | 'bolt'; label: string; end?: boolean }> = [
+  const items: Array<{ to: string; icon: 'trophy' | 'grid' | 'pulse' | 'user' | 'users' | 'chat' | 'bolt' | 'crown'; label: string; end?: boolean }> = [
     { to: '/', icon: 'trophy', label: 'Classement', end: true },
     { to: '/games', icon: 'grid', label: 'Jeux' },
     { to: '/blackjack', icon: 'bolt', label: 'Casino 🪙' },
@@ -37,6 +39,9 @@ export function Shell({ title, subtitle, children, onBack, action }: {
     { to: '/messages', icon: 'chat', label: 'Messages' },
     { to: '/profile', icon: 'user', label: 'Profil' },
   ];
+  if (user && ADMIN_PSEUDOS.includes(user.pseudo)) {
+    items.push({ to: '/admin', icon: 'crown', label: 'Admin' });
+  }
 
   return (
     <div className="shell">
