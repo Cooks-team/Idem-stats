@@ -100,7 +100,27 @@ export function InboxBell() {
               faisait crasher tout le React tree → écran noir intégral. Le
               boundary attrape l'erreur et n'écrase plus que la liste. */}
           <InboxErrorBoundary>
-            {data?.friendRequests
+              {/* Messages non lus : une seule row récapitulative qui amène
+                sur /messages. Affichée en tête pour qu'on la voie d'abord. */}
+            {(data?.unreadMessages ?? 0) > 0 && (
+              <Row key="msg-unread"
+                avatar={<div style={{
+                  width: 36, height: 36, borderRadius: '50%',
+                  background: 'var(--accent)', color: 'var(--accent-ink)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  fontSize: 18,
+                }}>💬</div>}
+                title={<><strong>{data!.unreadMessages}</strong> message{data!.unreadMessages! > 1 ? 's' : ''} non lu{data!.unreadMessages! > 1 ? 's' : ''}</>}
+                sub="Va lire dans la messagerie"
+                actions={
+                  <button className="btn btn-accent btn-sm" onClick={() => { setOpen(false); nav('/messages'); }}>
+                    Ouvrir
+                  </button>
+                }
+              />
+            )}
+
+          {data?.friendRequests
               ?.filter((r) => r && r.user && r.user.pseudo)
               .map((r) => (
                 <Row key={`fr-${r.id}`}
