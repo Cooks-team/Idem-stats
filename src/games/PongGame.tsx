@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
 import { useRemoteGameSync } from '../realtime/useRemoteGameSync';
 import { useEmotePair } from '../realtime/useEmotePair';
+import { Avatar } from '../ui/Avatar';
+import { absoluteAvatar } from '../api/client';
+import { DuelStart } from '../ui/DuelStart';
 import { EmoteBubble } from '../ui/EmoteBubble';
 import { EmotePicker } from '../ui/EmotePicker';
 
@@ -75,10 +78,25 @@ type PongScheme = 'arrows' | 'zqsd';
 interface PongStateMsg { paddles: Paddles; ball: Ball; score: { p1: number; p2: number } }
 interface PongInputMsg { dir: 'up' | 'down'; state: 'down' | 'up' }
 
-function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
+function PongComponent({ onFinish, player1, player2, mode = 'local', matchId }: GameProps) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [phase, setPhase] = useState<'ready' | 'running' | 'done'>('ready');
   const [myScheme, setMyScheme] = useState<PongScheme>(mode === 'guest' ? 'zqsd' : 'arrows');
+  // Swap des côtés en local : par défaut P1 droite (rouge), P2 gauche
+  // (bleu). Le user peut basculer avant de démarrer pour mettre P1 à
+  // gauche. En remote, pas de choix : convention host=droite.
+  const [sideSwapped, setSideSwapped] = useState(false);
+  // leftPlayer/rightPlayer dérivés du swap — utilisés dans le scoreboard
+  // et le bandeau de bienvenue. Couleur du paddle reste lié à P1/P2 (P1
+  // toujours rouge, P2 toujours bleu) ; seule la POSITION du paddle
+  // bouge.
+  const leftIsP1 = sideSwapped;
+  const leftPlayer  = leftIsP1 ? player1 : player2;
+  const rightPlayer = leftIsP1 ? player2 : player1;
+  const leftColor   = leftIsP1 ? '#FF6B57' : '#5B8CFF';
+  const rightColor  = leftIsP1 ? '#5B8CFF' : '#FF6B57';
+  const leftLabel   = leftPlayer?.pseudo  ?? (leftIsP1 ? 'Joueur 1' : 'Joueur 2');
+  const rightLabel  = rightPlayer?.pseudo ?? (leftIsP1 ? 'Joueur 2' : 'Joueur 1');
   // Trail de la balle (5 dernières positions) → ligne lumineuse derrière elle
   // qui s'épaissit avec la vitesse. Donne le feel arcade quand ça envoie.
   const stateRef = useRef<{ paddles: Paddles; ball: Ball; keys: Set<string>; guestUp: boolean; guestDown: boolean; trail: Array<{ x: number; y: number }> }>({
@@ -320,18 +338,27 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 14, position: 'relative' }}>
-      {/* Scoreboard aligné sur la position des paddles : 🔵 J2 à gauche,
-          🔴 J1 à droite (l'ancien ordre était inversé → bug d'orientation
-          remonté en playtest). */}
-      <div style={{ display: 'flex', gap: 60, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 32, alignItems: 'center' }}>
-        <span style={{ color: '#5B8CFF', display: 'inline-flex', alignItems: 'center' }}>
-          🔵 {score.p2}
-          <EmoteBubble emoteKey={leftBubbleKey} side="right" />
-        </span>
-        <span style={{ color: '#FF6B57', display: 'inline-flex', alignItems: 'center' }}>
-          <EmoteBubble emoteKey={rightBubbleKey} side="left" />
-          🔴 {score.p1}
-        </span>
+      {/* Scoreboard avec pseudo + avatar à la place de "J1/J2".
+          Ordre aligné sur la position des paddles : gauche puis droite.
+          leftScore et rightScore sont rebranchés selon le swap. */}
+      <div style={{ display: 'flex', gap: 30, fontFamily: 'var(--font-display)', fontWeight: 700, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
+        <PongPlayerScore
+          color={leftColor}
+          score={leftIsP1 ? score.p1 : score.p2}
+          pseudo={leftLabel}
+          avatarUrl={leftPlayer?.avatarUrl ?? null}
+          emoteKey={leftBubbleKey}
+          emoteSide="right"
+        />
+        <span style={{ color: 'var(--muted)', fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 24 }}>VS</span>
+        <PongPlayerScore
+          color={rightColor}
+          score={leftIsP1 ? score.p2 : score.p1}
+          pseudo={rightLabel}
+          avatarUrl={rightPlayer?.avatarUrl ?? null}
+          emoteKey={rightBubbleKey}
+          emoteSide="left"
+        />
       </div>
       <div style={{ position: 'absolute', top: 6, right: 6, zIndex: 5 }}>
         <EmotePicker onPick={emotes.triggerMine} label="Emotes (envoyé à l'adversaire en mode distance)" />
@@ -352,18 +379,31 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
         </div>
       )}
       {phase === 'ready' && mode !== 'guest' && (
-        <>
-          <button className="btn btn-accent btn-lg" onClick={start}>Démarrer</button>
-          <div style={{ color: 'var(--muted)', fontSize: 13, textAlign: 'center' }}>
-            {mode === 'local'
-              ? <>🔵 J2 (gauche) : Z/S ou W/S &nbsp;·&nbsp; 🔴 J1 (droite) : ↑ ↓ &nbsp;·&nbsp; Premier à {WIN_SCORE}.</>
-              : <>Tu pilotes <strong>🔴 J1 (droite)</strong> avec {myScheme === 'arrows' ? 'les flèches' : 'Z/S ou W/S'}. Premier à {WIN_SCORE}.{mode === 'host' && ' Mode distance — c\'est toi qui lances la partie.'}</>}
-          </div>
-        </>
+        <DuelStart
+          leftPlayer={{
+            pseudo: leftPlayer?.pseudo,
+            avatarUrl: leftPlayer?.avatarUrl ?? null,
+            fallback: leftIsP1 ? 'Joueur 1' : 'Joueur 2',
+            color: leftColor,
+          }}
+          rightPlayer={{
+            pseudo: rightPlayer?.pseudo,
+            avatarUrl: rightPlayer?.avatarUrl ?? null,
+            fallback: leftIsP1 ? 'Joueur 2' : 'Joueur 1',
+            color: rightColor,
+          }}
+          canSwap={mode === 'local'}
+          onSwap={() => setSideSwapped((v) => !v)}
+          onStart={start}
+          startLabel="Démarrer"
+          subtitle={mode === 'local'
+            ? `${leftLabel} : Z/S ou W/S · ${rightLabel} : ↑ ↓ · Premier à ${WIN_SCORE}.`
+            : `Tu joues à droite (↑↓). Premier à ${WIN_SCORE}.`}
+        />
       )}
       {phase === 'ready' && mode === 'guest' && (
         <div style={{ color: 'var(--muted)', fontSize: 14, textAlign: 'center', padding: '10px 0' }}>
-          ⚡ Tu es <strong style={{ color: '#5B8CFF' }}>🔵 J2 (gauche)</strong>. Contrôles : <strong>{myScheme === 'arrows' ? 'flèches' : 'Z/S'}</strong>.<br />
+          ⚡ Tu es <strong style={{ color: '#5B8CFF' }}>{leftPlayer?.pseudo ?? 'à gauche'}</strong>. Contrôles : <strong>{myScheme === 'arrows' ? 'flèches' : 'Z/S'}</strong>.<br />
           <span style={{ opacity: 0.85 }}>En attente que ton adversaire lance la partie…</span>
         </div>
       )}
@@ -372,6 +412,33 @@ function PongComponent({ onFinish, mode = 'local', matchId }: GameProps) {
       )}
       {phase === 'done' && <div style={{ color: 'var(--muted)' }}>Match terminé. Score envoyé…</div>}
     </div>
+  );
+}
+
+// Affiche un score + pseudo + avatar (au lieu de juste "J1: 0"). Inline
+// pour ne pas créer un nouveau fichier — le composant DuelStart partagé
+// couvre déjà la pré-game.
+function PongPlayerScore({ color, score, pseudo, avatarUrl, emoteKey, emoteSide }: {
+  color: string;
+  score: number;
+  pseudo: string;
+  avatarUrl: string | null;
+  emoteKey: string | null;
+  emoteSide: 'left' | 'right';
+}) {
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 10,
+      color, fontSize: 28,
+    }}>
+      {emoteSide === 'left' && <EmoteBubble emoteKey={emoteKey} side="left" />}
+      <Avatar seed={pseudo} size={36} imageUrl={absoluteAvatar(avatarUrl)} />
+      <span style={{ display: 'inline-flex', flexDirection: 'column', alignItems: emoteSide === 'left' ? 'flex-start' : 'flex-end', lineHeight: 1 }}>
+        <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 32 }}>{score}</span>
+        <span style={{ fontSize: 11, opacity: 0.85, maxWidth: 110, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{pseudo}</span>
+      </span>
+      {emoteSide === 'right' && <EmoteBubble emoteKey={emoteKey} side="right" />}
+    </span>
   );
 }
 
