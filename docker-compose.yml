@@ -11,6 +11,11 @@ services:
     restart: unless-stopped
     environment:
       VITE_API_BASE_URL: "${VITE_API_BASE_URL:-http://localhost:3000}"
+    # Expose le web Vite sur localhost:5173 — l'émulateur Android peut
+    # alors charger les jeux dans une WebView via 10.0.2.2:5173, sans
+    # passer par Traefik. La prod reste routée par Traefik via le domaine.
+    ports:
+      - "5173:3000"
     volumes:
       - .:/app
     working_dir: /app

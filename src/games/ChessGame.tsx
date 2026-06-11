@@ -1,8 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { GameModule, GameProps } from './GameModule';
 import { useEmotePair } from '../realtime/useEmotePair';
+import { useRemoteGameSync } from '../realtime/useRemoteGameSync';
 import { EmoteBubble } from '../ui/EmoteBubble';
 import { EmotePicker } from '../ui/EmotePicker';
+
+// ─── Sync remote — payload échangé entre host et guest ──────────────────
+// Le guest envoie ses moves au host via sendInput. Le host valide, applique
+// et broadcast le nouveau GameState via sendState. Modèle host-authoritative
+// (cohérent avec Snake/Pong/Babyfoot/Kart).
+interface ChessMoveInput {
+  from: [number, number];
+  to: [number, number];
+  promotion?: 'Q' | 'R' | 'B' | 'N';
+}
 
 // Échecs 1v1 local sur même écran/clavier, façon chess.com.
 //   - P1 joue les blancs, P2 les noirs (assignment arbitraire)
@@ -306,6 +317,54 @@ function ChessComponent({ onFinish, player1, player2, mode = 'local', matchId }:
   const [state, setState] = useState<GameState>(initGameState);
   const [selected, setSelected] = useState<[number, number] | null>(null);
   const [finished, setFinished] = useState(false);
+  const stateRef = useRef<GameState>(state);
+  stateRef.current = state;
+
+  // Couleur que le joueur courant contrôle : white (P1) en local/host,
+  // black (P2) en guest. En local, on autorise les 2 (les 2 joueurs
+  // partagent le même écran/clavier).
+  const myColor: Color | 'both' =
+    mode === 'host'  ? 'w' :
+    mode === 'guest' ? 'b' :
+    'both';
+
+  // Vrai si je peux légitimement bouger la pièce de cette couleur. Sert
+  // à bloquer le déplacement des pièces adverses en remote (vrai bug
+  // remonté en playtest : "je peux bouger les pions de l'autre comme
+  // si on était en local").
+  function canIMove(pieceColor: Color): boolean {
+    if (myColor === 'both') return pieceColor === stateRef.current.turn;
+    return pieceColor === myColor && pieceColor === stateRef.current.turn;
+  }
+
+  // ─── Sync host-authoritative ──────────────────────────────────────────
+  // Host : reçoit les move intents du guest, valide légalité (le guest
+  //   pourrait être bidouillé), applique et broadcast l'état complet.
+  // Guest : reçoit l'état total, l'affiche en read-only ; au clic, envoie
+  //   un intent au host au lieu d'appliquer localement.
+  const { sendInput, sendState } = useRemoteGameSync<ChessMoveInput, GameState>({
+    matchId: matchId ?? null,
+    role: mode,
+    onInput: (move) => {
+      // Host : applique le coup envoyé par le guest si LÉGAL ET côté guest.
+      const cur = stateRef.current;
+      // Le guest n'a le droit de bouger que les noirs
+      const piece = cur.board[move.from[0]]?.[move.from[1]];
+      if (!piece || piece.color !== 'b' || cur.turn !== 'b') return;
+      const legal = legalMoves(cur, move.from[0], move.from[1]);
+      const isLegal = legal.some(([r, f]) => r === move.to[0] && f === move.to[1]);
+      if (!isLegal) return;
+      const next = applyMove(cur, move.from[0], move.from[1], move.to[0], move.to[1], move.promotion ?? 'Q');
+      setState(next);
+      sendState(next);
+    },
+    onState: (snap) => {
+      // Guest : remplace son état par celui du host. Les selections/drag
+      // locales sont reset car le contexte change.
+      setState(snap);
+      setSelected(null);
+    },
+  });
   // Drag-and-drop : suit le pointeur (souris ou doigt) avec position fixed,
   // déplace la pièce de l'origine vers la case relâchée.
   const [drag, setDrag] = useState<{
@@ -332,36 +391,46 @@ function ChessComponent({ onFinish, player1, player2, mode = 'local', matchId }:
 
   useEffect(() => {
     if (finished) return;
+    // En remote, SEUL le host doit reporter le score — sinon les deux
+    // appelleraient onFinish/reportScore et on créerait des doublons +
+    // potentiel exploit ELO.
+    const iCanReport = mode !== 'guest';
     if (status === 'checkmate') {
       setFinished(true);
-      // L'autre couleur gagne (la couleur courante est mat)
       const winnerIsWhite = state.turn === 'b';
       const sc1 = winnerIsWhite ? 1 : 0;
       const sc2 = winnerIsWhite ? 0 : 1;
-      setTimeout(() => onFinish(sc1, sc2), 1800);
+      if (iCanReport) setTimeout(() => onFinish(sc1, sc2), 1800);
     } else if (status === 'stalemate' || status === 'draw50') {
       setFinished(true);
-      setTimeout(() => onFinish(0, 0), 1800);
+      if (iCanReport) setTimeout(() => onFinish(0, 0), 1800);
     }
-  }, [status, state.turn, finished, onFinish]);
+  }, [status, state.turn, finished, onFinish, mode]);
 
   function onSquareClick(r: number, f: number) {
-    // Garde le comportement click-to-move pour ceux qui préfèrent (et pour la
-    // 2e étape du flow "sélectionne puis click sur la cible").
     if (status !== 'play' || finished) return;
     if (selected) {
       const isLegal = legalForSelected.some(([lr, lf]) => lr === r && lf === f);
       if (isLegal) {
-        setState(applyMove(state, selected[0], selected[1], r, f, 'Q'));
+        // En remote guest : on envoie l'intent au host, qui validera et
+        // broadcast l'état. En local/host : on applique direct.
+        if (mode === 'guest') {
+          sendInput({ from: [selected[0], selected[1]], to: [r, f], promotion: 'Q' });
+        } else {
+          const next = applyMove(state, selected[0], selected[1], r, f, 'Q');
+          setState(next);
+          // Host : broadcast l'état au guest pour qu'il voie le coup.
+          if (mode === 'host') sendState(next);
+        }
         setSelected(null);
         return;
       }
       const p = state.board[r][f];
-      if (p && p.color === state.turn) setSelected([r, f]);
+      if (p && canIMove(p.color)) setSelected([r, f]);
       else setSelected(null);
     } else {
       const p = state.board[r][f];
-      if (p && p.color === state.turn) setSelected([r, f]);
+      if (p && canIMove(p.color)) setSelected([r, f]);
     }
   }
 
@@ -381,7 +450,9 @@ function ChessComponent({ onFinish, player1, player2, mode = 'local', matchId }:
     if (status !== 'play' || finished) return;
     const piece = state.board[r][f];
     if (!piece) return;
-    if (piece.color !== state.turn) return;
+    // Garde-fou remote : tu ne peux PAS bouger les pièces de l'adversaire
+    // (vrai bug remonté : "je peux bouger ses pions comme en local").
+    if (!canIMove(piece.color)) return;
     // Capture le pointeur pour suivre le drag même si le doigt sort de la case
     try { e.currentTarget.setPointerCapture(e.pointerId); } catch { /* OK si pas supporté */ }
     setSelected([r, f]);
@@ -416,7 +487,16 @@ function ChessComponent({ onFinish, player1, player2, mode = 'local', matchId }:
         const [tr, tf] = target;
         const isLegal = legalForSelected.some(([lr, lf]) => lr === tr && lf === tf);
         if (isLegal && !(drag.from[0] === tr && drag.from[1] === tf)) {
-          setState(applyMove(state, drag.from[0], drag.from[1], tr, tf, 'Q'));
+          // Même séparation host-authoritative que onSquareClick : guest
+          // envoie l'intent au host, host applique + broadcast, local
+          // applique direct.
+          if (mode === 'guest') {
+            sendInput({ from: [drag.from[0], drag.from[1]], to: [tr, tf], promotion: 'Q' });
+          } else {
+            const next = applyMove(state, drag.from[0], drag.from[1], tr, tf, 'Q');
+            setState(next);
+            if (mode === 'host') sendState(next);
+          }
           setSelected(null);
         }
         // Si on lâche sur la case d'origine, on garde la sélection (= click)
