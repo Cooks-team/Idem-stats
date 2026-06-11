@@ -89,6 +89,9 @@ export interface InboxResponse {
   friendRequests: Array<{ id: string; createdAt: string; user: User }>;
   matchInvites: Match[];
   shifumiPendingPicks: Match[];
+  // Compteur de messages non lus toutes conversations confondues. Affiché
+  // comme une row cliquable dans la cloche → /messages.
+  unreadMessages?: number;
   total: number;
 }
 
