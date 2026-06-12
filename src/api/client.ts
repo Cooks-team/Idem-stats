@@ -1,5 +1,5 @@
 // Mince wrapper fetch : ajoute Bearer si dispo, sérialise JSON, jette une ApiError typée.
-import type { AuthResponse, BadgesResponse, BlackjackRoundResponse, ConversationSummary, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, Message, ShifumiPick, User, WallOfShameResponse, AdminTask } from './types';
+import type { AuthResponse, BadgesResponse, BlackjackRoom, BlackjackRoundResponse, ConversationSummary, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, Message, ShifumiPick, User, WallOfShameResponse, AdminTask } from './types';
 
 const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 export const API_BASE_URL = BASE;
@@ -161,6 +161,18 @@ export const api = {
   // Blackjack — applique le delta de coins après une manche (friend-trust).
   blackjackRound: (bet: number, payout: number, meta?: unknown) =>
     call<BlackjackRoundResponse>('/blackjack/round', { method: 'POST', body: JSON.stringify({ bet, payout, meta }) }),
+
+  // Blackjack rooms — multi-joueurs server-authoritative
+  blackjackJoin: () =>
+    call<{ seatIndex: number; room: BlackjackRoom }>('/blackjack/rooms/join', { method: 'POST' }),
+  blackjackLeave: () => call<{ ok: true }>('/blackjack/rooms/leave', { method: 'POST' }),
+  blackjackHeartbeat: () => call<{ ok: boolean }>('/blackjack/rooms/heartbeat', { method: 'POST' }),
+  blackjackBet: (bet: number) =>
+    call<{ ok: true }>('/blackjack/rooms/bet', { method: 'POST', body: JSON.stringify({ bet }) }),
+  blackjackHit:   () => call<{ ok: true }>('/blackjack/rooms/hit',   { method: 'POST' }),
+  blackjackStand: () => call<{ ok: true }>('/blackjack/rooms/stand', { method: 'POST' }),
+  blackjackDouble:() => call<{ ok: true }>('/blackjack/rooms/double',{ method: 'POST' }),
+  blackjackSplit: () => call<{ ok: true }>('/blackjack/rooms/split', { method: 'POST' }),
 
   // Sync temps réel pour les jeux remote (host-authoritative).
   // sendPlayInput : envoyé par le guest, reçu par le host via SSE

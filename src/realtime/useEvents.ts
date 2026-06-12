@@ -3,6 +3,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { API_BASE_URL, readPersistedToken } from '../api/client';
 import { playEmitter } from './playEvents';
 import { emoteEmitter } from './emoteEvents';
+import { blackjackEmitter } from './blackjackEvents';
+import type { BlackjackRoom } from '../api/types';
 
 // EventSource sur /events?token=<JWT>. Reconnexion auto en cas de coupure
 // (gérée nativement par EventSource via le header "retry"). Sur chaque event
@@ -76,12 +78,24 @@ export function useEvents(enabled: boolean) {
     };
     es.addEventListener('match.emote', emoteFn as EventListener);
 
+    // Snapshot d'une room blackjack — push direct vers le composant via
+    // l'emitter dédié. Pas d'invalidation TanStack : le state ne vient pas
+    // d'un endpoint REST, c'est purement event-driven.
+    const blackjackFn = (ev: MessageEvent) => {
+      const data = tryParse(ev.data);
+      if (data && typeof data === 'object') {
+        blackjackEmitter.emit(data as BlackjackRoom);
+      }
+    };
+    es.addEventListener('blackjack.room', blackjackFn as EventListener);
+
     return () => {
       es.removeEventListener('message', onMessage);
       listeners.forEach(([t, fn]) => es.removeEventListener(t, fn as EventListener));
       es.removeEventListener('match.play.input', playInputFn as EventListener);
       es.removeEventListener('match.play.state', playStateFn as EventListener);
       es.removeEventListener('match.emote', emoteFn as EventListener);
+      es.removeEventListener('blackjack.room', blackjackFn as EventListener);
       es.close();
     };
   }, [enabled, qc]);

@@ -13,6 +13,39 @@ export interface BlackjackRoundResponse {
   delta: number;
 }
 
+// ─ Blackjack rooms (multi-joueurs) ──────────────────────────────────────
+export interface BJCard { rank?: string; suit?: string; hidden?: boolean }
+export type BJHandStatus = 'playing' | 'standing' | 'busted' | 'blackjack';
+export type BJResult = 'blackjack' | 'win' | 'push' | 'lose' | 'busted' | null;
+export type BJPhase = 'waiting' | 'betting' | 'playing' | 'dealer' | 'result';
+
+export interface BJSeat {
+  index: number;
+  empty: boolean;
+  userId?: string;
+  pseudo?: string;
+  avatarUrl?: string | null;
+  bet?: number;
+  hands?: BJCard[][];
+  handBets?: number[];
+  handStatus?: BJHandStatus[];
+  activeHandIdx?: number;
+  result?: BJResult;
+  payout?: number;
+  isMe?: boolean;
+}
+
+export interface BlackjackRoom {
+  id: string;
+  phase: BJPhase;
+  roundId: number;
+  bettingDeadline: number;
+  resultDeadline: number;
+  maxSeats: number;
+  dealer: { hand: BJCard[]; total: number };
+  seats: BJSeat[];
+}
+
 export type MatchStatus = 'pending' | 'active' | 'finished' | 'cancelled';
 export type MatchSource = 'extension' | 'web' | 'manual';
 

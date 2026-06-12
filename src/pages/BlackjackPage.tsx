@@ -1,434 +1,219 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
 import { absoluteAvatar, api } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { Shell } from '../ui/Shell';
 import { Avatar } from '../ui/Avatar';
+import { blackjackEmitter } from '../realtime/blackjackEvents';
+import type { BJCard, BJSeat, BlackjackRoom } from '../api/types';
 
-// Blackjack solo contre un bot croupier (table 6 places).
-// Le multijoueur lobby arrivera plus tard ; pour l'instant le user
-// s'assied à la place du milieu, les autres sont des places libres.
+// Blackjack multi-joueurs : table de 6 sièges partagée. Quand on entre, on
+// est auto-assigné à une room dispo (ou une nouvelle si toutes pleines).
+// Le serveur fait foi pour les cartes / phases / payouts — pas de logique
+// de gameplay locale ici.
 
-const DEALER_NAMES = ['Bebeto', 'Jumper', 'Dim'] as const;
-const SUITS = ['♠', '♥', '♦', '♣'] as const;
-const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'] as const;
 const SEAT_COUNT = 6;
-
-type Suit = typeof SUITS[number];
-type Rank = typeof RANKS[number];
-interface Card { rank: Rank; suit: Suit; hidden?: boolean }
-
-type Phase = 'betting' | 'dealing' | 'player' | 'dealer' | 'reveal' | 'result';
-type RoundResult = 'win' | 'lose' | 'push' | 'blackjack' | 'bust' | null;
-
-function makeDeck(): Card[] {
-  const deck: Card[] = [];
-  for (const s of SUITS) for (const r of RANKS) deck.push({ rank: r, suit: s });
-  for (let i = deck.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [deck[i], deck[j]] = [deck[j], deck[i]];
-  }
-  return deck;
-}
-
-function handValue(hand: Card[]): number {
-  let total = 0;
-  let aces = 0;
-  for (const c of hand) {
-    if (c.hidden) continue;
-    if (c.rank === 'A') { aces += 1; total += 11; }
-    else if (c.rank === 'K' || c.rank === 'Q' || c.rank === 'J') total += 10;
-    else total += parseInt(c.rank, 10);
-  }
-  while (total > 21 && aces > 0) { total -= 10; aces -= 1; }
-  return total;
-}
-
-// Une figure qui vaut 10 strict (donc PAS l'As).
-function isTen(c: Card): boolean {
-  return c.rank === '10' || c.rank === 'J' || c.rank === 'Q' || c.rank === 'K';
-}
-
-// "Vrai" blackjack au sens casino : 21 sur exactement 2 cartes,
-// composé d'1 As + 1 figure valant 10. Important :
-// - A+A vaut 12, PAS un blackjack — l'ancien check `tenLike(d1)&&tenLike(d2)`
-//   (où tenLike incluait A) le marquait comme BJ et provoquait des push
-//   abusifs quand le joueur avait un vrai BJ.
-// - 21 obtenu après hit (ex. 5+6+10) ou après split N'EST PAS un blackjack.
-function isNaturalBlackjack(hand: Card[]): boolean {
-  if (hand.length !== 2) return false;
-  const [a, b] = hand;
-  return (a.rank === 'A' && isTen(b)) || (b.rank === 'A' && isTen(a));
-}
 
 export function BlackjackPage() {
   const { user, setUser } = useAuth();
   const nav = useNavigate();
-  const qc = useQueryClient();
-  const [dealerName] = useState(() => DEALER_NAMES[Math.floor(Math.random() * DEALER_NAMES.length)]);
+  const [room, setRoom] = useState<BlackjackRoom | null>(null);
+  const [seatIndex, setSeatIndex] = useState<number>(-1);
   const [bet, setBet] = useState(20);
-  const [phase, setPhase] = useState<Phase>('betting');
-  // Tableau de mains pour gérer le SPLIT — par défaut 1 seule main, jusqu'à 2
-  // après un split. handBets et handResults sont parallèles à playerHands.
-  const [playerHands, setPlayerHands] = useState<Card[][]>([]);
-  const [handBets, setHandBets] = useState<number[]>([]);
-  const [handResults, setHandResults] = useState<RoundResult[]>([]);
-  const [currentHandIndex, setCurrentHandIndex] = useState(0);
-  const [splitFromAces, setSplitFromAces] = useState(false);
-  const [dealerHand, setDealerHand] = useState<Card[]>([]);
-  // Total payout après la résolution finale (somme sur toutes les mains)
-  const [totalPayout, setTotalPayout] = useState(0);
-  const [totalBetCommitted, setTotalBetCommitted] = useState(0);
-  // Résultat "synthétique" pour le banner (la meilleure issue parmi les mains)
-  const [bannerResult, setBannerResult] = useState<RoundResult>(null);
-  const deckRef = useRef<Card[]>([]);
+  const [joinError, setJoinError] = useState<string | null>(null);
+  const [acting, setActing] = useState(false);
+  // Garde si on a déjà rejoint pour éviter le double join sur StrictMode (dev).
+  const joinedRef = useRef(false);
+
+  // Join au mount + leave au unmount + heartbeat.
+  useEffect(() => {
+    if (joinedRef.current) return;
+    joinedRef.current = true;
+    let alive = true;
+    api.blackjackJoin()
+      .then((r) => {
+        if (!alive) return;
+        setRoom(r.room);
+        setSeatIndex(r.seatIndex);
+      })
+      .catch((e) => setJoinError(humanize(e)));
+    return () => {
+      alive = false;
+      api.blackjackLeave().catch(() => {});
+    };
+  }, []);
+
+  // Heartbeat 20s pour ne pas être idle-kick (le serveur kick à 60s).
+  useEffect(() => {
+    const t = window.setInterval(() => { api.blackjackHeartbeat().catch(() => {}); }, 20_000);
+    return () => clearInterval(t);
+  }, []);
+
+  // Écoute les snapshots SSE.
+  useEffect(() => {
+    const off = blackjackEmitter.on((r) => {
+      // Filtre : on ne réagit qu'aux events de NOTRE room.
+      if (room && r.id !== room.id) return;
+      setRoom(r);
+      // Met à jour le solde de coins après un résultat (le serveur a
+      // appliqué le payout, on reflète localement sans round-trip /me).
+      const mySeat = r.seats.find((s) => s.isMe);
+      if (r.phase === 'result' && mySeat && user) {
+        // Le delta net = payout − total handBets. Le bet a déjà été débité
+        // au moment du bet, donc on n'ajoute QUE le payout brut au solde
+        // local pour rester cohérent.
+        const payout = mySeat.payout ?? 0;
+        if (payout > 0) {
+          setUser({ ...user, coins: (user.coins ?? 0) + payout });
+        }
+      }
+    });
+    return () => { off(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [room?.id, user?.id]);
+
+  const mySeat = room?.seats.find((s) => s.isMe) ?? null;
+  const myActiveHand = mySeat?.activeHandIdx ?? 0;
+  const myStatus = mySeat?.handStatus?.[myActiveHand];
+  const canBet = room?.phase === 'betting' && mySeat && (mySeat.bet ?? 0) === 0;
+  const canHit = room?.phase === 'playing' && myStatus === 'playing';
+  const canStand = canHit;
+  const canDouble = canHit && (mySeat?.hands?.[myActiveHand]?.length === 2);
+  const canSplit  = canHit
+    && mySeat?.hands?.length === 1
+    && mySeat.hands[0].length === 2
+    && mySeat.hands[0][0].rank === mySeat.hands[0][1].rank;
 
   const coins = user?.coins ?? 0;
-  const canBet = phase === 'betting' && bet >= 5 && bet <= coins;
-  const mySeatIndex = 2;
+  const presets = [5, 10, 25, 50, 100, 250].filter((p) => p <= coins);
 
-  // Calculs pour les boutons Double/Split — basés sur la main courante
-  const currentHand: Card[] = playerHands[currentHandIndex] ?? [];
-  const currentBet: number = handBets[currentHandIndex] ?? bet;
-  const canDouble = phase === 'player'
-                    && currentHand.length === 2
-                    && (coins - totalBetCommitted) >= currentBet;
-  const canSplit = phase === 'player'
-                   && currentHand.length === 2
-                   && currentHand[0].rank === currentHand[1].rank
-                   && playerHands.length === 1
-                   && (coins - totalBetCommitted) >= currentBet;
-
-  const roundMut = useMutation({
-    mutationFn: ({ bet, payout }: { bet: number; payout: number }) => api.blackjackRound(bet, payout),
-    onSuccess: (data) => {
-      if (user) setUser({ ...user, coins: data.coins });
-      qc.invalidateQueries({ queryKey: ['leaderboard'] });
-    },
-  });
-
-  function startRound() {
-    if (!canBet) return;
-    const deck = makeDeck();
-    deckRef.current = deck;
-    const p1 = deck.pop()!;
-    const d1 = deck.pop()!;
-    const p2 = deck.pop()!;
-    const d2: Card = { ...deck.pop()!, hidden: true };
-    setPlayerHands([[]]);
-    setHandBets([bet]);
-    setHandResults([null]);
-    setCurrentHandIndex(0);
-    setSplitFromAces(false);
-    setDealerHand([]);
-    setBannerResult(null);
-    setTotalPayout(0);
-    setTotalBetCommitted(bet);
-    setPhase('dealing');
-
-    setTimeout(() => setPlayerHands([[p1]]),     0);
-    setTimeout(() => setDealerHand([d1]),       350);
-    setTimeout(() => setPlayerHands([[p1, p2]]), 700);
-    setTimeout(() => setDealerHand([d1, d2]), 1050);
-    setTimeout(() => {
-      const ph = [p1, p2];
-      // Détection STRICTE : 21 sur 2 cartes avec un As + une figure-10.
-      // L'ancienne version laissait passer A+A (=12) comme dealer BJ →
-      // push faux positif quand le joueur avait un vrai blackjack.
-      const playerBJ = isNaturalBlackjack(ph);
-      const dealerBJ = isNaturalBlackjack([d1, { ...d2, hidden: false }]);
-      if (playerBJ || dealerBJ) {
-        // On découvre toujours la carte cachée pour révéler le BJ du dealer.
-        const revealed = [d1, { ...d2, hidden: false }];
-        setDealerHand(revealed);
-        // - Les deux ont BJ → push (mise rendue)
-        // - Joueur seul a BJ → paie 3:2 (blackjack)
-        // - Dealer seul a BJ → joueur perd sa mise initiale (lose)
-        const result: RoundResult =
-          playerBJ && dealerBJ ? 'push' :
-          playerBJ            ? 'blackjack' :
-                                'lose';
-        finishRoundSingle([ph], [bet], [result], revealed);
-      } else {
-        setPhase('player');
-      }
-    }, 1400);
+  async function doBet() {
+    if (!canBet || acting) return;
+    if (bet > coins) return;
+    setActing(true);
+    try { await api.blackjackBet(bet); if (user) setUser({ ...user, coins: coins - bet }); }
+    catch (e) { setJoinError(humanize(e)); }
+    finally { setActing(false); }
   }
-
-  function hit() {
-    if (phase !== 'player') return;
-    const next = deckRef.current.pop()!;
-    const updatedHands = playerHands.map((h, i) => i === currentHandIndex ? [...h, next] : h);
-    setPlayerHands(updatedHands);
-    const val = handValue(updatedHands[currentHandIndex]);
-    if (val > 21) {
-      const r = [...handResults];
-      r[currentHandIndex] = 'bust';
-      setHandResults(r);
-      setTimeout(() => advanceOrPlayDealer(r, updatedHands), 500);
-    } else if (val === 21) {
-      setTimeout(() => stand(updatedHands), 400);
-    }
-  }
-
-  function stand(handsOverride?: Card[][]) {
-    if (phase !== 'player') return;
-    const ph = handsOverride ?? playerHands;
-    advanceOrPlayDealer(handResults, ph);
-  }
-
-  function doubleDown() {
-    if (!canDouble) return;
-    const next = deckRef.current.pop()!;
-    const updatedHands = playerHands.map((h, i) => i === currentHandIndex ? [...h, next] : h);
-    const updatedBets  = handBets.map((b, i) => i === currentHandIndex ? b * 2 : b);
-    setPlayerHands(updatedHands);
-    setHandBets(updatedBets);
-    setTotalBetCommitted(totalBetCommitted + currentBet); // on ajoute UNE FOIS la mise initiale
-    const val = handValue(updatedHands[currentHandIndex]);
-    const r = [...handResults];
-    if (val > 21) r[currentHandIndex] = 'bust';
-    setHandResults(r);
-    // Après double, on stand obligatoirement → main suivante ou dealer
-    setTimeout(() => advanceOrPlayDealer(r, updatedHands), 600);
-  }
-
-  function split() {
-    if (!canSplit) return;
-    const hand = playerHands[0];
-    const fromAces = hand[0].rank === 'A';
-    const newCard1 = deckRef.current.pop()!;
-    const newCard2 = deckRef.current.pop()!;
-    const newHands: Card[][] = [
-      [hand[0], newCard1],
-      [hand[1], newCard2],
-    ];
-    setPlayerHands(newHands);
-    setHandBets([currentBet, currentBet]);
-    setHandResults([null, null]);
-    setCurrentHandIndex(0);
-    setSplitFromAces(fromAces);
-    setTotalBetCommitted(totalBetCommitted + currentBet);
-    // Règle classique : split d'As → 1 carte chacun puis stand auto sur les
-    // deux mains. On enchaîne directement vers le dealer ; pas besoin que le
-    // user clique Rester deux fois.
-    if (fromAces) {
-      setTimeout(() => advanceOrPlayDealer([null, null], newHands, 0), 600);
-    }
-  }
-
-  // Avance à la main suivante OU passe au dealer si toutes les mains du joueur
-  // sont résolues (bust ou stand). `fromIdx` est l'index de la main qui vient
-  // d'être terminée — on ne se base PAS sur `currentHandIndex` ici parce que
-  // setCurrentHandIndex est async et un appel récursif (cas split d'As)
-  // verrait encore l'ancienne valeur, causant un saut direct au dealer en
-  // sautant la main 2.
-  function advanceOrPlayDealer(currentResults: RoundResult[], currentHands: Card[][], fromIdx: number = currentHandIndex) {
-    const nextIdx = fromIdx + 1;
-    if (nextIdx < currentHands.length) {
-      setCurrentHandIndex(nextIdx);
-      // Si on revient sur une main split d'As déjà servie (2 cartes), on la
-      // stand auto en récursant avec nextIdx fixé explicitement.
-      if (splitFromAces && currentHands[nextIdx].length >= 2) {
-        setTimeout(() => advanceOrPlayDealer(currentResults, currentHands, nextIdx), 400);
-      }
-      return;
-    }
-    // Toutes les mains jouées → dealer
-    setPhase('dealer');
-    const revealed = dealerHand.map((c) => ({ ...c, hidden: false }));
-    setDealerHand(revealed);
-    // Si TOUTES les mains du joueur ont bust → dealer ne joue pas
-    const allBust = currentResults.every((r) => r === 'bust');
-    if (allBust) {
-      setTimeout(() => finishRoundSingle(currentHands, handBets, currentResults, revealed), 600);
-      return;
-    }
-    setTimeout(() => playDealer(currentHands, currentResults, revealed.slice()), 700);
-  }
-
-  function playDealer(hands: Card[][], results: RoundResult[], dh: Card[]) {
-    if (handValue(dh) >= 17) {
-      // Compute résultat pour chaque main pas encore résolue
-      const dv = handValue(dh);
-      const finalResults: RoundResult[] = hands.map((h, i) => {
-        if (results[i]) return results[i]; // déjà bust
-        const pv = handValue(h);
-        if (dv > 21 || pv > dv) return 'win';
-        if (pv < dv) return 'lose';
-        return 'push';
-      });
-      finishRoundSingle(hands, handBets, finalResults, dh);
-      return;
-    }
-    const next = deckRef.current.pop()!;
-    const newDh = [...dh, next];
-    setDealerHand(newDh);
-    setTimeout(() => playDealer(hands, results, newDh), 650);
-  }
-
-  function finishRoundSingle(hands: Card[][], bets: number[], results: RoundResult[], _dh: Card[]) {
-    let totalP = 0;
-    for (let i = 0; i < hands.length; i++) {
-      const r = results[i];
-      const b = bets[i];
-      let p = 0;
-      if (r === 'win') p = b * 2;
-      else if (r === 'push') p = b;
-      else if (r === 'blackjack') p = Math.floor(b * 2.5);
-      totalP += p;
-    }
-    setHandResults(results);
-    setTotalPayout(totalP);
-    setPhase('result');
-    // Banner result : on prend le "mieux" parmi blackjack > win > push > lose > bust
-    const priority: Record<NonNullable<RoundResult>, number> = { blackjack: 5, win: 4, push: 3, lose: 2, bust: 1 };
-    let best: RoundResult = null;
-    for (const r of results) {
-      if (r && (!best || priority[r] > priority[best])) best = r;
-    }
-    setBannerResult(best);
-    // Envoi unique avec total bet + total payout
-    const totalBet = bets.reduce((a, b) => a + b, 0);
-    roundMut.mutate({ bet: totalBet, payout: totalP });
-  }
-
-  function newRound() {
-    setPhase('betting');
-    setPlayerHands([]);
-    setHandBets([]);
-    setHandResults([]);
-    setCurrentHandIndex(0);
-    setSplitFromAces(false);
-    setDealerHand([]);
-    setBannerResult(null);
-    setTotalPayout(0);
-    setTotalBetCommitted(0);
-  }
-
-  const dealerVisible = useMemo(() => dealerHand.filter((c) => !c.hidden), [dealerHand]);
-  const dealerTotal = handValue(dealerVisible);
-  // Pour la table : on passe la main courante en visu principale (compat existante)
-  const playerHand = currentHand;
-  const playerTotal = handValue(playerHand);
-
-  // Construction des 6 places — le user occupe mySeatIndex, les autres sont vides
-  const seats = useMemo(() => Array.from({ length: SEAT_COUNT }, (_, i) => ({
-    index: i,
-    isMe: i === mySeatIndex,
-    player: i === mySeatIndex && user ? user : null,
-  })), [user]);
+  const wrap = (fn: () => Promise<unknown>) => async () => {
+    if (acting) return;
+    setActing(true);
+    try { await fn(); } catch (e) { setJoinError(humanize(e)); }
+    finally { setActing(false); }
+  };
 
   return (
-    <Shell title="🎰 Blackjack" onBack={() => nav(-1)} action={<span />}>
-      <BlackjackTable
-        seats={seats}
-        playerHand={playerHand}
-        dealerHand={dealerHand}
-        dealerName={dealerName}
-        dealerTotal={dealerTotal}
-        playerTotal={playerTotal}
-        phase={phase}
-        result={bannerResult}
-        payout={totalPayout}
-        bet={totalBetCommitted}
-        mySeatIndex={mySeatIndex}
-      />
-
-      {/* Si SPLIT en cours : affiche les 2 mains côte à côte avec la main
-          courante highlighted et l'autre en sous-titre */}
-      {playerHands.length > 1 && (
-        <div style={{ display: 'flex', gap: 16, justifyContent: 'center', marginTop: 12, flexWrap: 'wrap' }}>
-          {playerHands.map((h, i) => {
-            const v = handValue(h);
-            const r = handResults[i];
-            const isCurrent = i === currentHandIndex && phase === 'player';
-            return (
-              <div key={i} style={{
-                padding: '8px 14px', borderRadius: 12,
-                background: isCurrent ? 'color-mix(in oklab, var(--accent) 18%, var(--surface))' : 'var(--surface)',
-                border: `2px solid ${isCurrent ? 'var(--accent)' : 'var(--line)'}`,
-                minWidth: 130, textAlign: 'center',
-              }}>
-                <div style={{ fontSize: 11, color: 'var(--muted)', letterSpacing: 0.5, fontWeight: 700 }}>
-                  MAIN {i + 1} {r === 'bust' ? '· BUST' : r === 'win' ? '· GAIN' : r === 'lose' ? '· PERTE' : r === 'push' ? '· NUL' : r === 'blackjack' ? '· BJ' : ''}
-                </div>
-                <div style={{
-                  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 24,
-                  color: v > 21 ? '#FF6B57' : v === 21 ? '#D6FF3D' : 'var(--text)', marginTop: 2,
-                }}>
-                  {h.map(c => `${c.rank}${c.suit}`).join(' ')} <span style={{ fontSize: 16, color: 'var(--muted)' }}>· {v}</span>
-                </div>
-                <div style={{ fontSize: 11, color: '#FFD700', marginTop: 2 }}>
-                  Mise : {handBets[i]} 🪙
-                </div>
-              </div>
-            );
-          })}
+    <Shell title="🎰 Blackjack Casino" onBack={() => nav(-1)} action={<span />}>
+      {joinError && (
+        <div className="panel" style={{ background: 'rgba(255,107,87,0.12)', borderColor: 'var(--loss)', color: 'var(--loss)' }}>
+          {joinError}
         </div>
       )}
 
-      {/* Contrôles sous la table */}
-      <div style={{ marginTop: 18, display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }}>
-        {phase === 'betting' && (
-          <BettingBar bet={bet} setBet={setBet} coins={coins} onDeal={startRound} canDeal={canBet} />
-        )}
-        {phase === 'player' && (
-          <>
-            <button
-              className="btn btn-accent btn-lg"
-              onClick={hit}
-              disabled={splitFromAces}
-              title={splitFromAces ? 'Pas de tirage supplémentaire après split d\'As' : undefined}
-            >🃏 Tirer</button>
-            <button className="btn btn-line btn-lg" onClick={() => stand()}>✋ Rester</button>
-            <button
-              className="btn btn-line btn-lg"
-              onClick={doubleDown}
-              disabled={!canDouble}
-              title={!canDouble ? 'Double dispo sur 2 cartes uniquement, et il faut le solde pour doubler ta mise' : undefined}
-            >⏫ Doubler</button>
-            <button
-              className="btn btn-line btn-lg"
-              onClick={split}
-              disabled={!canSplit}
-              title={!canSplit ? 'Split dispo seulement sur une paire (avant tout autre tirage)' : undefined}
-            >✂️ Split</button>
-          </>
-        )}
-        {phase === 'result' && (
-          <button className="btn btn-accent btn-lg" onClick={newRound} disabled={roundMut.isPending}>
-            {roundMut.isPending ? '…' : 'Nouvelle manche'}
-          </button>
-        )}
-      </div>
+      {!room && !joinError && (
+        <div className="panel" style={{ textAlign: 'center', padding: 50 }}>
+          <div style={{ fontSize: 60 }}>🎰</div>
+          <div style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22, marginTop: 8 }}>
+            Recherche d'une table…
+          </div>
+        </div>
+      )}
 
-      <p style={{ color: 'var(--muted)', fontSize: 12, textAlign: 'center', marginTop: 18, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
-        Gagne tes jetons en faisant des 1v1 (+50 victoire · +10 défaite · +25 nul).
-        Blackjack paie 3:2. Le multijoueur lobby (5-6) arrive bientôt.
-      </p>
+      {room && (
+        <>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ color: 'var(--muted)', fontSize: 13 }}>
+              Table <span style={{ fontFamily: 'monospace', color: 'var(--text)' }}>#{room.id}</span>
+              {' · '}
+              <span style={{ color: 'var(--text)' }}>{room.seats.filter((s) => !s.empty).length}/{room.maxSeats} joueurs</span>
+            </div>
+            <PhaseBadge phase={room.phase} bettingDeadline={room.bettingDeadline} resultDeadline={room.resultDeadline} />
+          </div>
+
+          <BlackjackRoomTable room={room} seatIndex={seatIndex} />
+
+          {/* Contrôles selon la phase */}
+          <div style={{ marginTop: 18, display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }}>
+            {room.phase === 'betting' && mySeat && (mySeat.bet ?? 0) === 0 && (
+              <BettingBar bet={bet} setBet={setBet} coins={coins} presets={presets} onDeal={doBet} canDeal={!!canBet && bet > 0 && bet <= coins && !acting} />
+            )}
+            {room.phase === 'betting' && mySeat && (mySeat.bet ?? 0) > 0 && (
+              <div style={{ color: 'var(--muted)', fontSize: 14 }}>
+                ✅ Mise de {mySeat.bet} 🪙 placée. En attente des autres…
+              </div>
+            )}
+            {room.phase === 'playing' && (
+              <>
+                <button className="btn btn-accent btn-lg" onClick={wrap(() => api.blackjackHit())} disabled={!canHit || acting}>🃏 Tirer</button>
+                <button className="btn btn-line btn-lg" onClick={wrap(() => api.blackjackStand())} disabled={!canStand || acting}>✋ Rester</button>
+                <button className="btn btn-line btn-lg" onClick={wrap(() => api.blackjackDouble())} disabled={!canDouble || acting}>⏫ Doubler</button>
+                <button className="btn btn-line btn-lg" onClick={wrap(() => api.blackjackSplit())} disabled={!canSplit || acting}>✂️ Split</button>
+              </>
+            )}
+            {room.phase === 'dealer' && (
+              <div style={{ color: 'var(--muted)', fontSize: 14 }}>🤵 Le croupier joue…</div>
+            )}
+            {room.phase === 'result' && (
+              <ResultStrip mySeat={mySeat} />
+            )}
+            {room.phase === 'waiting' && (
+              <div style={{ color: 'var(--muted)', fontSize: 14 }}>En attente du prochain round…</div>
+            )}
+          </div>
+
+          <p style={{ color: 'var(--muted)', fontSize: 12, textAlign: 'center', marginTop: 18, maxWidth: 480, marginLeft: 'auto', marginRight: 'auto' }}>
+            Une nouvelle table s'ouvre quand celle-ci est pleine. Quitte avec le bouton retour — ta place sera libérée.
+          </p>
+        </>
+      )}
     </Shell>
   );
 }
 
-// ─ Table SVG façon casino Vegas ─────────────────────────────────────────────
-function BlackjackTable({
-  seats, playerHand, dealerHand, dealerName, dealerTotal, playerTotal,
-  phase, result, payout, bet, mySeatIndex,
-}: {
-  seats: Array<{ index: number; isMe: boolean; player: { pseudo: string; avatarUrl?: string | null } | null }>;
-  playerHand: Card[]; dealerHand: Card[]; dealerName: string; dealerTotal: number; playerTotal: number;
-  phase: Phase; result: RoundResult; payout: number; bet: number; mySeatIndex: number;
+// ─ Sous-composants ─────────────────────────────────────────────────────
+function PhaseBadge({ phase, bettingDeadline, resultDeadline }: {
+  phase: string; bettingDeadline: number; resultDeadline: number;
 }) {
-  // Coordonnées en unités viewBox (1000×600)
-  const VB_W = 1000;
-  const VB_H = 600;
-  // Centre des places : arc convexe (smile) en bas
-  const seatArcCenter = { x: VB_W / 2, y: 110 }; // au-dessus de la zone
+  const [, force] = useState(0);
+  useEffect(() => {
+    const t = window.setInterval(() => force((n) => (n + 1) % 1000), 250);
+    return () => clearInterval(t);
+  }, []);
+  const map: Record<string, { label: string; color: string }> = {
+    waiting:  { label: 'EN ATTENTE',  color: 'var(--muted)' },
+    betting:  { label: 'MISEZ',       color: '#FFD700' },
+    playing:  { label: 'EN JEU',      color: 'var(--accent)' },
+    dealer:   { label: 'CROUPIER',    color: '#5B8CFF' },
+    result:   { label: 'RÉSULTATS',   color: '#3DD68C' },
+  };
+  const cfg = map[phase] ?? { label: phase.toUpperCase(), color: 'var(--muted)' };
+  const countdown = phase === 'betting' && bettingDeadline > 0
+    ? Math.max(0, Math.ceil((bettingDeadline - Date.now()) / 1000))
+    : phase === 'result' && resultDeadline > 0
+    ? Math.max(0, Math.ceil((resultDeadline - Date.now()) / 1000))
+    : null;
+  return (
+    <div style={{
+      display: 'inline-flex', alignItems: 'center', gap: 8,
+      padding: '5px 12px', borderRadius: 999,
+      background: `color-mix(in oklab, ${cfg.color} 20%, var(--surface))`,
+      border: `1px solid ${cfg.color}`,
+      color: cfg.color,
+      fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12, letterSpacing: 1,
+    }}>
+      {cfg.label}{countdown !== null && <> · {countdown}s</>}
+    </div>
+  );
+}
+
+function BlackjackRoomTable({ room, seatIndex }: { room: BlackjackRoom; seatIndex: number }) {
+  // Sièges sur un arc en bas du SVG, dealer au-dessus.
+  const VB_W = 1000, VB_H = 560;
+  const seatArcCenter = { x: VB_W / 2, y: 80 };
   const seatArcRadius = 440;
-  const seatStartAngle = Math.PI * 0.30; // ~54°
-  const seatEndAngle   = Math.PI * 0.70; // ~126°
+  const seatStartAngle = Math.PI * 0.30;
+  const seatEndAngle   = Math.PI * 0.70;
+  const seats = room.seats;
   const seatPositions = seats.map((_, i) => {
     const t = seats.length === 1 ? 0.5 : i / (seats.length - 1);
     const angle = seatStartAngle + t * (seatEndAngle - seatStartAngle);
@@ -442,66 +227,31 @@ function BlackjackTable({
     <div style={{ position: 'relative', width: '100%', maxWidth: 1000, margin: '0 auto', aspectRatio: `${VB_W} / ${VB_H}` }}>
       <svg viewBox={`0 0 ${VB_W} ${VB_H}`} style={{ width: '100%', height: '100%', display: 'block' }}>
         <defs>
-          {/* Feutre vert avec vignette */}
           <radialGradient id="felt" cx="50%" cy="50%" r="65%">
             <stop offset="0%"  stopColor="#1B7A3F" />
             <stop offset="65%" stopColor="#0F5A2C" />
             <stop offset="100%" stopColor="#053015" />
           </radialGradient>
-          {/* Arc supérieur jaune pour "Dealer Must Draw on 16…" */}
-          <path id="arcRules" d="M 180 290 A 360 260 0 0 1 820 290" fill="none" />
-          {/* Arc interne pour "INSURANCE PAYS 2 TO 1" */}
-          <path id="arcInsurance" d="M 220 320 A 320 230 0 0 1 780 320" fill="none" />
         </defs>
-
-        {/* Fond table */}
         <rect width={VB_W} height={VB_H} rx="24" fill="url(#felt)" />
-        {/* Bordure cuir */}
         <rect x="2" y="2" width={VB_W - 4} height={VB_H - 4} rx="22" fill="none" stroke="#3A1F0C" strokeWidth="6" />
-        <rect x="12" y="12" width={VB_W - 24} height={VB_H - 24} rx="16" fill="none" stroke="rgba(0,0,0,0.4)" strokeWidth="2" />
-
-        {/* BLACK JACK header + PAYS 3 TO 2 */}
-        <text x={VB_W / 2} y="100" textAnchor="middle"
-          fontFamily="Georgia, serif" fontSize="40" fontWeight="700"
-          fill="#0a0a0a" letterSpacing="6">
+        <text x={VB_W / 2} y="70" textAnchor="middle" fontFamily="Georgia, serif" fontSize="32" fontWeight="700" fill="#0a0a0a" letterSpacing="5">
           BLACK JACK
         </text>
-        <text x={VB_W / 2} y="135" textAnchor="middle"
-          fontFamily="Georgia, serif" fontSize="14" fontWeight="700"
-          fill="#D4A028" letterSpacing="4">
-          PAYS 3 TO 2
+        <text x={VB_W / 2} y="100" textAnchor="middle" fontFamily="Georgia, serif" fontSize="12" fontWeight="700" fill="#D4A028" letterSpacing="3">
+          PAYS 3 TO 2 · TABLE #{room.id}
         </text>
 
-        {/* Arc jaune "Dealer Must Draw on 16 and Stand on 17" */}
-        <path d="M 180 290 A 360 260 0 0 1 820 290" stroke="#E5C158" strokeWidth="4" fill="none" />
-        <text fontFamily="Georgia, serif" fontSize="20" fontWeight="700" fill="#0a0a0a" letterSpacing="2">
-          <textPath href="#arcRules" startOffset="50%" textAnchor="middle">
-            Dealer Must Draw on 16 and Stand on 17
-          </textPath>
-        </text>
-
-        {/* INSURANCE PAYS 2 TO 1 — rouge */}
-        <text fontFamily="Georgia, serif" fontSize="32" fontWeight="800" fill="#B11D1D" letterSpacing="6">
-          <textPath href="#arcInsurance" startOffset="50%" textAnchor="middle">
-            INSURANCE PAYS
-          </textPath>
-        </text>
-        {/* Labels "2 TO 1" sur les côtés */}
-        <text x="195" y="335" fontFamily="Georgia, serif" fontSize="22" fontWeight="700" fill="#0a0a0a" textAnchor="middle" transform="rotate(-32 195 335)">2 TO 1</text>
-        <text x="805" y="335" fontFamily="Georgia, serif" fontSize="22" fontWeight="700" fill="#0a0a0a" textAnchor="middle" transform="rotate(32 805 335)">2 TO 1</text>
-
-        {/* Sièges (cases jaunes) */}
+        {/* Sièges */}
         {seatPositions.map((pos, i) => (
           <g key={i}>
-            {/* Carré or */}
             <rect
               x={pos.x - 55} y={pos.y - 35} width="110" height="70" rx="14"
-              fill={seats[i].isMe ? 'rgba(214, 255, 61, 0.10)' : 'rgba(0,0,0,0.18)'}
-              stroke="#E5C158" strokeWidth="3"
+              fill={i === seatIndex ? 'rgba(214, 255, 61, 0.10)' : 'rgba(0,0,0,0.18)'}
+              stroke={i === seatIndex ? '#D6FF3D' : '#E5C158'} strokeWidth="3"
             />
-            {!seats[i].player && (
-              <text x={pos.x} y={pos.y + 5} textAnchor="middle"
-                fontFamily="Georgia, serif" fontSize="12" fill="rgba(229, 193, 88, 0.75)">
+            {seats[i].empty && (
+              <text x={pos.x} y={pos.y + 5} textAnchor="middle" fontFamily="Georgia, serif" fontSize="11" fill="rgba(229, 193, 88, 0.75)">
                 place libre
               </text>
             )}
@@ -509,157 +259,147 @@ function BlackjackTable({
         ))}
       </svg>
 
-      {/* ── Couches HTML par-dessus pour avatars + cartes ──────────────────── */}
-      {/* Avatar dealer + cartes */}
-      <DealerBox dealerName={dealerName} dealerTotal={dealerTotal} dealerHand={dealerHand} phase={phase}
-        boxStyle={{ position: 'absolute', top: '3%', left: '50%', transform: 'translateX(-50%)', textAlign: 'center' }}
-      />
+      {/* Dealer en haut */}
+      <div style={{ position: 'absolute', top: '4%', left: '50%', transform: 'translateX(-50%)', textAlign: 'center' }}>
+        <div style={{
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+          padding: '4px 12px', borderRadius: 999,
+          background: 'rgba(0,0,0,0.55)', color: '#fff',
+          fontFamily: 'Georgia, serif', fontWeight: 700,
+        }}>
+          <span style={{ fontSize: 18 }}>🤵</span>
+          <span>Croupier</span>
+          {room.dealer.total > 0 && (
+            <span style={{ marginLeft: 4, fontSize: 12, color: '#D6FF3D' }}>· {room.dealer.total}</span>
+          )}
+        </div>
+        <div style={{ display: 'flex', gap: 4, justifyContent: 'center', marginTop: 6, minHeight: 92 }}>
+          {room.dealer.hand.map((c, i) => <MiniCard key={i} card={c} index={i} />)}
+        </div>
+      </div>
 
-      {/* Pot central + bandeau résultat */}
-      <CenterPot
-        phase={phase} result={result} payout={payout} bet={bet}
-        style={{ position: 'absolute', left: '50%', top: '40%', transform: 'translate(-50%, -50%)', textAlign: 'center' }}
-      />
-
-      {/* Avatars sur chaque siège (overlay HTML car SVG n'aime pas les <img>) */}
+      {/* Avatars + mains des joueurs sur chaque siège */}
       {seats.map((seat, i) => {
         const pos = seatPositions[i];
-        const left = (pos.x / VB_W) * 100;
-        const top  = (pos.y / VB_H) * 100;
+        const leftPct = (pos.x / VB_W) * 100;
+        const topPct  = (pos.y / VB_H) * 100;
+        const handTopPct = ((pos.y - 110) / VB_H) * 100;
         return (
-          <div
-            key={i}
-            style={{
-              position: 'absolute', left: `${left}%`, top: `${top}%`,
+          <div key={i}>
+            {/* Avatar + pseudo sur le siège */}
+            <div style={{
+              position: 'absolute', left: `${leftPct}%`, top: `${topPct}%`,
               transform: 'translate(-50%, -50%)',
               width: '11%', textAlign: 'center', pointerEvents: 'none',
-            }}
-          >
-            {seat.player ? (
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                <Avatar
-                  seed={seat.player.pseudo}
-                  size={56}
-                  ring ringColor={seat.isMe ? '#D6FF3D' : '#E5C158'}
-                  imageUrl={absoluteAvatar(seat.player.avatarUrl ?? null)}
-                />
-                <div style={{
-                  marginTop: 4, fontSize: 11, fontWeight: 700,
-                  color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,0.8)',
-                  maxWidth: '110%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
-                }}>
-                  {seat.player.pseudo}
+            }}>
+              {!seat.empty && (
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <Avatar seed={seat.pseudo ?? '?'} size={52} ring ringColor={seat.isMe ? '#D6FF3D' : '#E5C158'} imageUrl={absoluteAvatar(seat.avatarUrl ?? null)} />
+                  <div style={{ marginTop: 4, fontSize: 11, fontWeight: 700, color: '#fff', textShadow: '0 1px 2px rgba(0,0,0,0.8)', maxWidth: '110%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {seat.pseudo}
+                  </div>
+                  {seat.bet != null && seat.bet > 0 && (
+                    <div style={{ fontSize: 11, color: '#FFD700', textShadow: '0 1px 2px rgba(0,0,0,0.8)' }}>
+                      🪙 {seat.bet}
+                    </div>
+                  )}
                 </div>
+              )}
+            </div>
+
+            {/* Cartes au-dessus du siège */}
+            {!seat.empty && seat.hands && seat.hands.length > 0 && (
+              <div style={{
+                position: 'absolute', left: `${leftPct}%`, top: `${handTopPct}%`,
+                transform: 'translate(-50%, -100%)',
+                display: 'flex', gap: 6, justifyContent: 'center',
+                pointerEvents: 'none',
+              }}>
+                {seat.hands.map((h, hi) => (
+                  <PlayerHandStack key={hi} hand={h} status={seat.handStatus?.[hi]} active={hi === (seat.activeHandIdx ?? 0)} />
+                ))}
               </div>
-            ) : null}
+            )}
           </div>
         );
       })}
-
-      {/* Cartes du joueur courant — au-dessus de son siège */}
-      {playerHand.length > 0 && (() => {
-        const pos = seatPositions[mySeatIndex];
-        const leftPct = (pos.x / VB_W) * 100;
-        const topPct  = ((pos.y - 110) / VB_H) * 100;
-        return (
-          <div style={{
-            position: 'absolute', left: `${leftPct}%`, top: `${topPct}%`,
-            transform: 'translate(-50%, -100%)',
-            display: 'flex', gap: 4, justifyContent: 'center',
-            pointerEvents: 'none',
-          }}>
-            {playerHand.map((c, i) => <MiniCard key={i} card={c} index={i} />)}
-          </div>
-        );
-      })()}
-
-      {/* Total du joueur sous ses cartes */}
-      {playerHand.length > 0 && (() => {
-        const pos = seatPositions[mySeatIndex];
-        const leftPct = (pos.x / VB_W) * 100;
-        const topPct  = ((pos.y + 50) / VB_H) * 100;
-        return (
-          <div style={{
-            position: 'absolute', left: `${leftPct}%`, top: `${topPct}%`,
-            transform: 'translate(-50%, 0)',
-            fontFamily: 'Georgia, serif', fontWeight: 700, fontSize: 14,
-            color: playerTotal > 21 ? '#ff6b57' : playerTotal === 21 ? '#D6FF3D' : '#fff',
-            textShadow: '0 1px 2px rgba(0,0,0,0.8)', whiteSpace: 'nowrap',
-          }}>
-            {playerTotal}
-          </div>
-        );
-      })()}
     </div>
   );
 }
 
-function DealerBox({ dealerName, dealerTotal, dealerHand, phase, boxStyle }: {
-  dealerName: string; dealerTotal: number; dealerHand: Card[]; phase: Phase; boxStyle: React.CSSProperties;
-}) {
+function PlayerHandStack({ hand, status, active }: { hand: BJCard[]; status?: string; active: boolean }) {
+  const total = computeTotal(hand);
+  const tag = status === 'busted' ? 'BUST' : status === 'standing' ? 'STAND' : status === 'blackjack' ? 'BJ' : '';
   return (
-    <div style={boxStyle}>
-      <div style={{
-        display: 'inline-flex', alignItems: 'center', gap: 8,
-        padding: '4px 12px', borderRadius: 999,
-        background: 'rgba(0,0,0,0.5)',
-        color: '#fff', fontFamily: 'Georgia, serif', fontWeight: 700,
-      }}>
-        <span style={{ fontSize: 18 }}>🤵</span>
-        <span>{dealerName}</span>
-        {phase !== 'betting' && (
-          <span style={{ marginLeft: 4, fontSize: 12, color: '#D6FF3D' }}>· {dealerTotal}</span>
-        )}
-      </div>
-      <div style={{ display: 'flex', gap: 4, justifyContent: 'center', marginTop: 6, minHeight: 92 }}>
-        {dealerHand.map((c, i) => <MiniCard key={i} card={c} index={i} />)}
-      </div>
-    </div>
-  );
-}
-
-function CenterPot({ phase, result, payout, bet, style }: {
-  phase: Phase; result: RoundResult; payout: number; bet: number; style: React.CSSProperties;
-}) {
-  return (
-    <div style={style}>
-      {phase === 'result' && result && <ResultBanner result={result} payout={payout} bet={bet} />}
-      {phase !== 'betting' && phase !== 'result' && (
-        <div style={{
-          display: 'inline-flex', gap: 8, alignItems: 'center',
-          padding: '6px 16px', borderRadius: 999,
-          background: 'rgba(214, 255, 61, 0.20)',
-          border: '1px solid #D6FF3D',
-          color: '#fff', fontWeight: 700, textShadow: '0 1px 2px rgba(0,0,0,0.5)',
-        }}>
-          <span>{bet}</span>
-          <span style={{ fontSize: 18 }}>🪙</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─ UI helpers (cartes, banner, etc.) ──────────────────────────────────────
-function CoinsBadge({ coins }: { coins: number }) {
-  return (
-    <span style={{
-      display: 'inline-flex', alignItems: 'center', gap: 6,
-      padding: '6px 12px', borderRadius: 999,
-      background: 'color-mix(in oklab, #FFD700 22%, var(--surface))',
-      border: '1px solid #FFD700',
-      fontFamily: 'var(--font-display)', fontWeight: 700, whiteSpace: 'nowrap',
+    <div style={{
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 2,
+      padding: 4, borderRadius: 8,
+      border: active ? '2px solid #D6FF3D' : '2px solid transparent',
     }}>
-      <span style={{ fontSize: 16 }}>🪙</span>
-      <span>{coins}</span>
-    </span>
+      <div style={{ display: 'flex', gap: 3 }}>
+        {hand.map((c, i) => <MiniCard key={i} card={c} index={i} />)}
+      </div>
+      <div style={{
+        fontFamily: 'Georgia, serif', fontWeight: 700, fontSize: 12,
+        color: total > 21 ? '#FF6B57' : total === 21 ? '#D6FF3D' : '#fff',
+        textShadow: '0 1px 2px rgba(0,0,0,0.8)',
+      }}>
+        {total} {tag && <span style={{ color: 'var(--muted)', marginLeft: 4 }}>· {tag}</span>}
+      </div>
+    </div>
   );
 }
 
-function BettingBar({ bet, setBet, coins, onDeal, canDeal }: {
-  bet: number; setBet: (n: number) => void; coins: number; onDeal: () => void; canDeal: boolean;
+function computeTotal(hand: BJCard[]): number {
+  let total = 0, aces = 0;
+  for (const c of hand) {
+    if (c.hidden || !c.rank) continue;
+    if (c.rank === 'A') { aces += 1; total += 11; }
+    else if (c.rank === 'K' || c.rank === 'Q' || c.rank === 'J') total += 10;
+    else total += parseInt(c.rank, 10);
+  }
+  while (total > 21 && aces > 0) { total -= 10; aces -= 1; }
+  return total;
+}
+
+function MiniCard({ card, index }: { card: BJCard; index: number }) {
+  const isRed = card.suit === '♥' || card.suit === '♦';
+  return (
+    <div style={{
+      width: 42, height: 62, borderRadius: 6,
+      background: card.hidden ? 'linear-gradient(135deg, #5B3A1F, #2D1A0F)' : '#fff',
+      border: '2px solid #fff', boxShadow: '0 2px 6px rgba(0,0,0,0.5)',
+      display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
+      padding: 3, color: card.hidden ? '#fff' : (isRed ? '#D32030' : '#0E0E12'),
+      fontFamily: 'serif', fontWeight: 700,
+      animation: `idemCardDeal 0.4s cubic-bezier(0.16, 1, 0.3, 1) ${index * 0.06}s both`,
+      userSelect: 'none',
+    }}>
+      {!card.hidden && (
+        <>
+          <div style={{ fontSize: 11, lineHeight: 1 }}>{card.rank}</div>
+          <div style={{ fontSize: 16, textAlign: 'center' }}>{card.suit}</div>
+          <div style={{ fontSize: 11, lineHeight: 1, alignSelf: 'flex-end', transform: 'rotate(180deg)' }}>{card.rank}</div>
+        </>
+      )}
+      {card.hidden && (
+        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🎴</div>
+      )}
+      <style>{`
+        @keyframes idemCardDeal {
+          0%   { transform: translate(0, -80px) rotate(-12deg) scale(0.7); opacity: 0; }
+          70%  { transform: translate(0, 6px) rotate(2deg) scale(1.04); opacity: 1; }
+          100% { transform: translate(0, 0) rotate(0) scale(1); opacity: 1; }
+        }
+      `}</style>
+    </div>
+  );
+}
+
+function BettingBar({ bet, setBet, coins, presets, onDeal, canDeal }: {
+  bet: number; setBet: (n: number) => void; coins: number; presets: number[];
+  onDeal: () => void; canDeal: boolean;
 }) {
-  const presets = [5, 10, 25, 50, 100, 250];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontFamily: 'var(--font-display)' }}>
@@ -667,7 +407,7 @@ function BettingBar({ bet, setBet, coins, onDeal, canDeal }: {
         <input
           type="number"
           value={bet}
-          onChange={(e) => setBet(Math.max(5, Math.min(coins, parseInt(e.target.value, 10) || 5)))}
+          onChange={(e) => setBet(Math.max(1, Math.min(coins, parseInt(e.target.value, 10) || 1)))}
           style={{
             width: 100, padding: '6px 12px', borderRadius: 10,
             background: 'var(--surface-2)', border: '1px solid var(--line)',
@@ -677,118 +417,55 @@ function BettingBar({ bet, setBet, coins, onDeal, canDeal }: {
         <span style={{ fontSize: 20 }}>🪙</span>
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
-        {presets.filter((p) => p <= coins).map((p) => (
-          <button key={p} type="button" className={`chip ${bet === p ? 'active accent' : ''}`} onClick={() => setBet(p)}>
-            {p}
-          </button>
+        {presets.map((p) => (
+          <button key={p} type="button" className={`chip ${bet === p ? 'active accent' : ''}`} onClick={() => setBet(p)}>{p}</button>
         ))}
-        {coins > 0 && (
-          <button type="button" className="chip" onClick={() => setBet(coins)}>ALL IN</button>
-        )}
+        {coins > 0 && <button type="button" className="chip" onClick={() => setBet(coins)}>ALL IN</button>}
       </div>
-      <button className="btn btn-accent btn-lg" onClick={onDeal} disabled={!canDeal}>
-        🃏 Distribuer
-      </button>
-      {coins < 5 && (
-        <div style={{ color: 'var(--loss)', fontSize: 12 }}>
-          Plus assez de jetons. Va gagner des matchs en 1v1 !
-        </div>
+      <button className="btn btn-accent btn-lg" onClick={onDeal} disabled={!canDeal}>🃏 Miser</button>
+      {coins < 1 && (
+        <div style={{ color: 'var(--loss)', fontSize: 12 }}>Plus de jetons. Gagne en 1v1 !</div>
       )}
     </div>
   );
 }
 
-function MiniCard({ card, index }: { card: Card; index: number }) {
-  const isRed = card.suit === '♥' || card.suit === '♦';
-  return (
-    <div
-      style={{
-        width: 56, height: 84,
-        borderRadius: 8,
-        background: card.hidden ? 'linear-gradient(135deg, #5B3A1F, #2D1A0F)' : '#fff',
-        border: '2px solid #fff',
-        boxShadow: '0 3px 8px rgba(0,0,0,0.55)',
-        position: 'relative',
-        display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-        padding: 4,
-        color: card.hidden ? '#fff' : (isRed ? '#D32030' : '#0E0E12'),
-        fontFamily: 'serif', fontWeight: 700,
-        animation: `idemCardDeal 0.45s cubic-bezier(0.16, 1, 0.3, 1) ${index * 0.08}s both`,
-        userSelect: 'none',
-      }}
-    >
-      {!card.hidden && (
-        <>
-          <div style={{ fontSize: 13, lineHeight: 1 }}>{card.rank}</div>
-          <div style={{ fontSize: 22, textAlign: 'center' }}>{card.suit}</div>
-          <div style={{ fontSize: 13, lineHeight: 1, alignSelf: 'flex-end', transform: 'rotate(180deg)' }}>{card.rank}</div>
-        </>
-      )}
-      {card.hidden && (
-        <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24 }}>
-          🎴
-        </div>
-      )}
-      <style>{`
-        @keyframes idemCardDeal {
-          0%   { transform: translate(0, -120px) rotate(-12deg) scale(0.7); opacity: 0; }
-          70%  { transform: translate(0, 8px) rotate(2deg) scale(1.04); opacity: 1; }
-          100% { transform: translate(0, 0) rotate(0) scale(1); opacity: 1; }
-        }
-      `}</style>
-    </div>
-  );
-}
-
-function ResultBanner({ result, payout, bet }: { result: RoundResult; payout: number; bet: number }) {
-  // Le banner ne se fie plus uniquement au "result" symbolique (qui peut être
-  // 'win' sur une main split alors qu'on a perdu globalement) : on calcule le
-  // NET réel (payout - bet) pour déterminer si on est gagnant, perdant ou nul.
-  const delta = payout - bet;
-  const netResult: NonNullable<RoundResult> =
-    delta > 0
-      ? (result === 'blackjack' ? 'blackjack' : 'win')
-      : delta < 0
-      ? (result === 'bust' ? 'bust' : 'lose')
-      : 'push';
-  const map: Record<NonNullable<RoundResult>, { text: string; color: string; emoji: string; subline: (d: number, b: number, p: number) => string }> = {
-    win:       { text: 'GAGNÉ',        color: '#3DD68C', emoji: '💰', subline: (d, b, p) => `Mise ${b} → Gain ${p}  ·  Net +${d} 🪙` },
-    blackjack: { text: 'BLACKJACK !',  color: '#FFD700', emoji: '🎰', subline: (d, b, p) => `Mise ${b} → Gain ${p} (3:2)  ·  Net +${d} 🪙` },
-    push:      { text: 'ÉGALITÉ',      color: '#cdcdcd', emoji: '🤝', subline: (_d, b, _p) => `Mise ${b} rendue  ·  Net 0 🪙` },
-    lose:      { text: 'PERDU',        color: '#FF6B57', emoji: '💸', subline: (d, b, _p) => `Mise ${b} perdue  ·  Net ${d} 🪙` },
-    bust:      { text: 'BUST (> 21)',  color: '#FF6B57', emoji: '💥', subline: (d, b, _p) => `Mise ${b} perdue  ·  Net ${d} 🪙` },
-  };
-  if (!result) return null;
-  const cfg = map[netResult];
+function ResultStrip({ mySeat }: { mySeat: BJSeat | null }) {
+  if (!mySeat || !mySeat.result) return <div style={{ color: 'var(--muted)' }}>Résultats…</div>;
+  const r = mySeat.result;
+  const payout = mySeat.payout ?? 0;
+  const totalBet = useMemo(() => (mySeat.handBets ?? []).reduce((a, b) => a + b, 0), [mySeat.handBets]);
+  const net = payout - totalBet;
+  const map = {
+    win:       { label: 'GAGNÉ',       color: '#3DD68C', emoji: '💰' },
+    blackjack: { label: 'BLACKJACK !', color: '#FFD700', emoji: '🎰' },
+    push:      { label: 'ÉGALITÉ',     color: '#cdcdcd', emoji: '🤝' },
+    lose:      { label: 'PERDU',       color: '#FF6B57', emoji: '💸' },
+    busted:    { label: 'BUST',        color: '#FF6B57', emoji: '💥' },
+  } as const;
+  const cfg = map[r as keyof typeof map] ?? map.lose;
   return (
     <div style={{
-      display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-      padding: '14px 26px', borderRadius: 14,
-      background: 'rgba(0,0,0,0.78)',
-      border: `2px solid ${cfg.color}`,
-      animation: 'idemPopIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both',
-      minWidth: 280,
+      display: 'inline-flex', alignItems: 'center', gap: 12,
+      padding: '10px 20px', borderRadius: 14,
+      background: 'rgba(0,0,0,0.6)', border: `2px solid ${cfg.color}`,
     }}>
-      <div style={{ fontSize: 36, lineHeight: 1 }}>{cfg.emoji}</div>
-      <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 26, color: cfg.color, letterSpacing: 1.5 }}>
-        {cfg.text}
-      </div>
-      <div style={{
-        fontSize: 18, fontWeight: 800, color: delta > 0 ? '#3DD68C' : delta < 0 ? '#FF6B57' : '#cdcdcd',
-        marginTop: 4,
-      }}>
-        {delta > 0 ? `+${delta}` : delta} 🪙
-      </div>
-      <div style={{ fontSize: 11.5, color: 'rgba(255,255,255,0.7)', marginTop: 4 }}>
-        {cfg.subline(delta, bet, payout)}
-      </div>
-      <style>{`
-        @keyframes idemPopIn {
-          0%   { transform: scale(0.4); opacity: 0; }
-          80%  { transform: scale(1.08); opacity: 1; }
-          100% { transform: scale(1); opacity: 1; }
-        }
-      `}</style>
+      <span style={{ fontSize: 28 }}>{cfg.emoji}</span>
+      <span style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 20, color: cfg.color, letterSpacing: 1 }}>{cfg.label}</span>
+      <span style={{ fontWeight: 800, color: net > 0 ? '#3DD68C' : net < 0 ? '#FF6B57' : '#cdcdcd' }}>
+        {net > 0 ? `+${net}` : net} 🪙
+      </span>
     </div>
   );
+}
+
+function humanize(e: unknown): string {
+  if (e && typeof e === 'object' && 'message' in e) {
+    const m = String((e as { message: string }).message);
+    if (m === 'insufficient_coins') return 'Pas assez de jetons.';
+    if (m === 'already_bet')        return 'Tu as déjà misé pour ce round.';
+    if (m === 'not_seated')         return 'Tu n\'es pas assis à une table.';
+    return m;
+  }
+  return 'Erreur inconnue.';
 }
