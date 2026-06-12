@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
-import { api, ApiError } from '../api/client';
+import { api, ApiError, readAdminApiKey, setAdminApiKey } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { Avatar } from '../ui/Avatar';
-import type { AdminTask, User } from '../api/types';
+import type { AdminMatchRow, AdminTask, AdminUserRow, User } from '../api/types';
 
-const PASSWORD = 'gigagwer';
 const UNLOCK_KEY = 'podium.admin.unlocked';
 
 const CODES: Record<string, number> = { cooks: 100 };
@@ -21,8 +20,9 @@ export function AdminPage() {
     return (
         <div className="admin">
             <div className="admin-wrap">
-                {unlocked ? <Board onLock={() => { sessionStorage.removeItem(UNLOCK_KEY); setUnlocked(false); }} />
-                    : <Lock onUnlock={() => { sessionStorage.setItem(UNLOCK_KEY, '1'); setUnlocked(true); }} />}
+                {unlocked
+                  ? <Board onLock={() => { sessionStorage.removeItem(UNLOCK_KEY); setAdminApiKey(null); setUnlocked(false); }} />
+                  : <Lock onUnlock={() => { sessionStorage.setItem(UNLOCK_KEY, '1'); setUnlocked(true); }} />}
             </div>
             <style>{ADMIN_CSS}</style>
         </div>
@@ -30,17 +30,62 @@ export function AdminPage() {
 }
 
 // ── Écran de verrouillage ────────────────────────────────────────────────────
+// Deux voies :
+//  1. "Auto" — l'utilisateur est connecté avec un compte dont le pseudo est
+//     dans ADMIN_PSEUDOS côté serveur. Au mount, on tente /admin/users avec
+//     son JWT ; si 200, on unlock direct. Si 403 → la voie API key reste.
+//  2. "Clé API" — input pour saisir ADMIN_API_KEY. On la pose dans
+//     sessionStorage via setAdminApiKey() et on retry. Si le serveur accepte
+//     (200), on unlock. Sinon, on affiche l'erreur et on efface la clé.
 function Lock({ onUnlock }: { onUnlock: () => void }) {
     const nav = useNavigate();
-    const [pwd, setPwd] = useState('');
+    const { user } = useAuth();
+    const [key, setKey] = useState('');
     const [shake, setShake] = useState(false);
-    const [error, setError] = useState(false);
+    const [error, setError] = useState<string | null>(null);
+    const [checking, setChecking] = useState(true);
 
-    function tryUnlock() {
-        if (pwd === PASSWORD) { onUnlock(); return; }
-        setError(true);
-        setShake(true);
-        setTimeout(() => setShake(false), 450);
+    // Au mount : tente d'accéder à /admin/users avec ce qu'on a (JWT seul,
+    // ou JWT + clé déjà en sessionStorage si on a déjà unlock une fois).
+    useEffect(() => {
+        let alive = true;
+        api.adminListUsers()
+          .then(() => { if (alive) onUnlock(); })
+          .catch((e: unknown) => {
+              if (!alive) return;
+              if (e instanceof ApiError && (e.status === 401 || e.status === 403)) {
+                  setChecking(false);
+              } else {
+                  setChecking(false);
+                  setError('Erreur inattendue. Réessaie ou utilise une clé API.');
+              }
+          });
+        return () => { alive = false; };
+    }, [onUnlock]);
+
+    async function tryWithKey() {
+        if (!key.trim()) return;
+        setAdminApiKey(key.trim());
+        try {
+            await api.adminListUsers();
+            onUnlock();
+        } catch (e) {
+            setAdminApiKey(null);
+            setError(e instanceof ApiError && e.status === 403 ? 'Clé invalide.' : 'Erreur réseau.');
+            setShake(true);
+            setTimeout(() => setShake(false), 450);
+        }
+    }
+
+    if (checking) {
+        return (
+            <div className="admin-lock">
+                <div className="panel admin-lock-card">
+                    <div className="admin-lock-badge">🔒</div>
+                    <h1 className="admin-lock-title">Vérification…</h1>
+                </div>
+            </div>
+        );
     }
 
     return (
@@ -49,23 +94,27 @@ function Lock({ onUnlock }: { onUnlock: () => void }) {
                 <div className="admin-lock-badge">🔒</div>
                 <div className="eyebrow" style={{ justifyContent: 'center' }}><span className="label">Accès restreint</span></div>
                 <h1 className="admin-lock-title">Espace admin</h1>
-                <p className="admin-lock-sub">Entre le mot de passe pour accéder au tableau.</p>
+                <p className="admin-lock-sub">
+                    {user
+                      ? `Connecté en tant que ${user.pseudo}, mais ton compte n'est pas admin. Utilise une clé API pour entrer.`
+                      : "Connecte-toi avec un compte admin, ou utilise une clé API."}
+                </p>
 
                 <div className="field" style={{ marginTop: 4 }}>
-                    <div className="field-label">Mot de passe</div>
+                    <div className="field-label">Clé API admin</div>
                     <input
                         type="password"
                         autoFocus
-                        value={pwd}
-                        placeholder="••••••••"
-                        onChange={(e) => { setPwd(e.target.value); setError(false); }}
-                        onKeyDown={(e) => e.key === 'Enter' && tryUnlock()}
+                        value={key}
+                        placeholder="ADMIN_API_KEY"
+                        onChange={(e) => { setKey(e.target.value); setError(null); }}
+                        onKeyDown={(e) => e.key === 'Enter' && tryWithKey()}
                     />
                 </div>
-                {error && <div className="admin-lock-error">Mot de passe incorrect.</div>}
+                {error && <div className="admin-lock-error">{error}</div>}
 
-                <button className="btn btn-accent btn-full" style={{ marginTop: 14 }} onClick={tryUnlock}>
-                    Déverrouiller
+                <button className="btn btn-accent btn-full" style={{ marginTop: 14 }} onClick={tryWithKey}>
+                    Entrer
                 </button>
                 <button className="btn btn-ghost btn-sm btn-full" style={{ marginTop: 8 }} onClick={() => nav('/')}>
                     ← Retour au site
@@ -76,10 +125,13 @@ function Lock({ onUnlock }: { onUnlock: () => void }) {
 }
 
 // ── Tableau (données API) ─────────────────────────────────────────────────────
+type AdminTab = 'mod' | 'tasks';
+
 function Board({ onLock }: { onLock: () => void }) {
     const nav = useNavigate();
     const { user, setUser } = useAuth();
     const qc = useQueryClient();
+    const [tab, setTab] = useState<AdminTab>('mod');
 
     const { data, isLoading, error } = useQuery({
         queryKey: ['admin', 'tasks'],
@@ -87,6 +139,7 @@ function Board({ onLock }: { onLock: () => void }) {
         refetchInterval: 3000,
         refetchOnWindowFocus: true,
         retry: false,
+        enabled: tab === 'tasks',
     });
     const refresh = () => qc.invalidateQueries({ queryKey: ['admin', 'tasks'] });
 
@@ -146,7 +199,18 @@ function Board({ onLock }: { onLock: () => void }) {
                 </div>
             </div>
 
-            {notAdmin ? (
+            <div className="admin-tabs">
+                <button className={`chip ${tab === 'mod' ? 'active accent' : ''}`} onClick={() => setTab('mod')}>
+                    🛡️ Modération
+                </button>
+                <button className={`chip ${tab === 'tasks' ? 'active accent' : ''}`} onClick={() => setTab('tasks')}>
+                    ✅ Tâches admin
+                </button>
+            </div>
+
+            {tab === 'mod' && <ModerationPanel />}
+
+            {tab === 'tasks' && (notAdmin ? (
                 <div className="panel" style={{ textAlign: 'center', color: 'var(--loss)', padding: 28 }}>
                     Ton compte connecté n'est pas dans la liste des admins. Connecte-toi avec un compte admin.
                 </div>
@@ -194,7 +258,7 @@ function Board({ onLock }: { onLock: () => void }) {
                         ))}
                     </div>
                 </>
-            )}
+            ))}
 
             {/* Barre "code" cachée — quasi invisible, s'éclaire au survol/focus */}
             <CodeBar
@@ -202,6 +266,148 @@ function Board({ onLock }: { onLock: () => void }) {
                 onGranted={(coins) => { if (user) setUser({ ...user, coins }); }}
             />
         </>
+    );
+}
+
+// ── Modération : Users + Matches ────────────────────────────────────────────
+function ModerationPanel() {
+    const qc = useQueryClient();
+    const usersQ = useQuery({ queryKey: ['admin', 'users'], queryFn: () => api.adminListUsers(), refetchInterval: 5000 });
+    const matchesQ = useQuery({ queryKey: ['admin', 'matches'], queryFn: () => api.adminListMatches(), refetchInterval: 5000 });
+    const banMut = useMutation({
+        mutationFn: (v: { id: string; reason?: string }) => api.adminBan(v.id, v.reason),
+        onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'users'] }),
+    });
+    const unbanMut = useMutation({
+        mutationFn: (id: string) => api.adminUnban(id),
+        onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'users'] }),
+    });
+    const resetMut = useMutation({
+        mutationFn: (id: string) => api.adminResetElo(id),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: ['admin', 'users'] });
+            qc.invalidateQueries({ queryKey: ['admin', 'matches'] });
+            qc.invalidateQueries({ queryKey: ['leaderboard'] });
+        },
+    });
+    const delMatchMut = useMutation({
+        mutationFn: (id: string) => api.adminDeleteMatch(id),
+        onSuccess: () => {
+            qc.invalidateQueries({ queryKey: ['admin', 'matches'] });
+            qc.invalidateQueries({ queryKey: ['leaderboard'] });
+        },
+    });
+
+    const users = usersQ.data ?? [];
+    const matches = matchesQ.data ?? [];
+
+    return (
+        <>
+            <div className="panel admin-mod-section">
+                <div className="eyebrow"><span className="label">👤 Joueurs · {users.length}</span></div>
+                {usersQ.isLoading && !users.length && <div className="admin-mod-empty">Chargement…</div>}
+                {!usersQ.isLoading && users.length === 0 && <div className="admin-mod-empty">Aucun joueur.</div>}
+                <div className="admin-mod-rows">
+                    {users.map((u) => (
+                        <UserRow
+                            key={u.id}
+                            row={u}
+                            disabled={banMut.isPending || unbanMut.isPending || resetMut.isPending}
+                            onBan={(reason) => banMut.mutate({ id: u.id, reason })}
+                            onUnban={() => unbanMut.mutate(u.id)}
+                            onResetElo={() => resetMut.mutate(u.id)}
+                        />
+                    ))}
+                </div>
+            </div>
+
+            <div className="panel admin-mod-section">
+                <div className="eyebrow"><span className="label">⚔️ Matchs récents · {matches.length}</span></div>
+                {matchesQ.isLoading && !matches.length && <div className="admin-mod-empty">Chargement…</div>}
+                {!matchesQ.isLoading && matches.length === 0 && <div className="admin-mod-empty">Aucun match.</div>}
+                <div className="admin-mod-rows">
+                    {matches.map((m) => (
+                        <MatchRow
+                            key={m.id}
+                            row={m}
+                            disabled={delMatchMut.isPending}
+                            onDelete={() => delMatchMut.mutate(m.id)}
+                        />
+                    ))}
+                </div>
+            </div>
+        </>
+    );
+}
+
+function UserRow({ row, disabled, onBan, onUnban, onResetElo }: {
+    row: AdminUserRow; disabled: boolean;
+    onBan: (reason?: string) => void; onUnban: () => void; onResetElo: () => void;
+}) {
+    function confirmBan() {
+        const reason = window.prompt(`Bannir ${row.pseudo} ?\nRaison (optionnelle) :`);
+        if (reason === null) return; // Annulé
+        onBan(reason.trim() || undefined);
+    }
+    function confirmReset() {
+        if (!window.confirm(`Reset ELO de ${row.pseudo} ?\nCela supprime ses ${row.matchCount} match(s) finis — irréversible.`)) return;
+        onResetElo();
+    }
+    return (
+        <div className="admin-mod-row">
+            <Avatar seed={row.pseudo} size={36} imageUrl={row.avatarUrl} />
+            <div className="admin-mod-row-main">
+                <div className="admin-mod-row-title">
+                    {row.pseudo}
+                    {row.banned && <span className="admin-mod-pill loss">BANNI</span>}
+                </div>
+                <div className="admin-mod-row-sub">
+                    {row.matchCount} matchs · {row.coins} 🪙
+                    {row.banReason && <> · « {row.banReason} »</>}
+                </div>
+            </div>
+            <div className="admin-mod-actions">
+                {row.banned
+                  ? <button className="btn btn-line btn-sm" disabled={disabled} onClick={onUnban}>Débannir</button>
+                  : <button className="btn btn-ghost btn-sm" disabled={disabled} onClick={confirmBan}>Bannir</button>}
+                <button className="btn btn-line btn-sm" disabled={disabled || row.matchCount === 0} onClick={confirmReset}>
+                    Reset ELO
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function MatchRow({ row, disabled, onDelete }: {
+    row: AdminMatchRow; disabled: boolean; onDelete: () => void;
+}) {
+    const p1 = row.player1?.pseudo ?? '?';
+    const p2 = row.player2?.pseudo ?? '?';
+    const winner = row.winnerId === row.player1?.id ? p1 : row.winnerId === row.player2?.id ? p2 : null;
+    function confirmDelete() {
+        const label = `Supprimer ${p1} vs ${p2} (${row.scoreP1}-${row.scoreP2}) ?\nL'ELO sera recalculé sans ce match.`;
+        if (!window.confirm(label)) return;
+        onDelete();
+    }
+    return (
+        <div className="admin-mod-row">
+            <div className="admin-mod-row-main">
+                <div className="admin-mod-row-title">
+                    {p1} <span style={{ color: 'var(--muted)' }}>vs</span> {p2}
+                    <span className="admin-mod-pill" style={{ marginLeft: 8 }}>{row.game}</span>
+                    {row.status === 'cancelled' && <span className="admin-mod-pill loss">ANNULÉ</span>}
+                </div>
+                <div className="admin-mod-row-sub">
+                    {row.scoreP1}–{row.scoreP2} {winner && <>· 🏆 {winner}</>}
+                    {row.finishedAt && <> · {new Date(row.finishedAt).toLocaleString('fr-FR')}</>}
+                </div>
+            </div>
+            <div className="admin-mod-actions">
+                <button className="btn btn-ghost btn-sm" disabled={disabled} onClick={confirmDelete}>
+                    🗑 Supprimer
+                </button>
+            </div>
+        </div>
     );
 }
 
@@ -393,6 +599,30 @@ const ADMIN_CSS = `
 /* Top bar */
 .admin-top { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
 .admin-h1 { font-family: var(--font-display); font-weight: 700; font-size: 34px; margin: 2px 0 0; }
+
+/* Tabs entre Modération et Tâches admin */
+.admin-tabs { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
+
+/* Sections Users / Matches */
+.admin-mod-section { padding: 16px; margin-bottom: 16px; }
+.admin-mod-empty { color: var(--muted); text-align: center; padding: 20px 0; }
+.admin-mod-rows { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-height: 600px; overflow-y: auto; padding-right: 4px; }
+.admin-mod-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; }
+.admin-mod-row-main { flex: 1; min-width: 0; }
+.admin-mod-row-title { font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.admin-mod-row-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.admin-mod-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.admin-mod-pill {
+  display: inline-flex; align-items: center;
+  padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;
+  background: color-mix(in oklab, var(--muted) 25%, transparent);
+  color: var(--text);
+  text-transform: uppercase;
+}
+.admin-mod-pill.loss {
+  background: color-mix(in oklab, var(--loss) 25%, transparent);
+  color: var(--loss);
+}
 
 /* Composer */
 .admin-composer { display: flex; align-items: center; gap: 12px; padding: 12px; margin-bottom: 22px; flex-wrap: wrap; }

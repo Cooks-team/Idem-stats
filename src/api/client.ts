@@ -1,5 +1,5 @@
 // Mince wrapper fetch : ajoute Bearer si dispo, sérialise JSON, jette une ApiError typée.
-import type { AuthResponse, BadgesResponse, BlackjackRoom, BlackjackRoundResponse, ConversationSummary, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, Message, ShifumiPick, User, WallOfShameResponse, AdminTask } from './types';
+import type { AdminMatchRow, AdminUserRow, AuthResponse, BadgesResponse, BlackjackRoom, BlackjackRoundResponse, ConversationSummary, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, Message, ShifumiPick, User, WallOfShameResponse, AdminTask } from './types';
 
 const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 export const API_BASE_URL = BASE;
@@ -58,11 +58,29 @@ export class ApiError extends Error {
   }
 }
 
+// Admin API key — alternative au JWT pour les endpoints /admin/*. Stockée
+// uniquement en sessionStorage (clearée à la fermeture de l'onglet).
+const ADMIN_KEY_STORAGE = 'podium.admin.apikey';
+export function setAdminApiKey(key: string | null) {
+  try {
+    if (key) sessionStorage.setItem(ADMIN_KEY_STORAGE, key);
+    else sessionStorage.removeItem(ADMIN_KEY_STORAGE);
+  } catch { /* sessionStorage indisponible */ }
+}
+export function readAdminApiKey(): string | null {
+  try { return sessionStorage.getItem(ADMIN_KEY_STORAGE); } catch { return null; }
+}
+
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers);
   if (!(init.body instanceof FormData)) headers.set('Content-Type', 'application/json');
   const token = readPersistedToken();
   if (token) headers.set('Authorization', `Bearer ${token}`);
+  // Admin key envoyée pour les routes /admin/* (le backend accepte SOIT
+  // un JWT admin SOIT cette clé). On la pose pour tous les paths car
+  // c'est ignoré côté serveur ailleurs.
+  const adminKey = readAdminApiKey();
+  if (adminKey) headers.set('x-admin-key', adminKey);
   const res = await fetch(`${BASE}${path}`, { ...init, headers });
   const ct = res.headers.get('content-type') || '';
   const data = ct.includes('application/json') ? await res.json().catch(() => null) : await res.text();
@@ -198,4 +216,16 @@ export const api = {
     call<AdminTask>(`/admin/tasks/${id}/comments`, { method: 'POST', body: JSON.stringify({ text }) }),
   adminDeleteComment: (id: string, commentId: string) =>
     call<AdminTask>(`/admin/tasks/${id}/comments/${commentId}`, { method: 'DELETE' }),
+
+  // Admin modération — users + matches
+  adminListUsers: () => call<AdminUserRow[]>('/admin/users'),
+  adminBan: (id: string, reason?: string) =>
+    call<{ ok: true }>(`/admin/users/${id}/ban`, { method: 'POST', body: JSON.stringify({ reason }) }),
+  adminUnban: (id: string) =>
+    call<{ ok: true }>(`/admin/users/${id}/unban`, { method: 'POST' }),
+  adminResetElo: (id: string) =>
+    call<{ ok: true; deleted: number }>(`/admin/users/${id}/reset-elo`, { method: 'POST' }),
+  adminListMatches: () => call<AdminMatchRow[]>('/admin/matches'),
+  adminDeleteMatch: (id: string) =>
+    call<{ ok: true }>(`/admin/matches/${id}`, { method: 'DELETE' }),
 };

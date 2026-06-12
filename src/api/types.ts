@@ -13,6 +13,37 @@ export interface BlackjackRoundResponse {
   delta: number;
 }
 
+// ─ Admin modération ────────────────────────────────────────────────────
+export interface AdminUserRow {
+  id: string;
+  pseudo: string;
+  avatarUrl: string | null;
+  coins: number;
+  banned: boolean;
+  bannedAt: string | null;
+  banReason: string | null;
+  createdAt: string;
+  matchCount: number;
+}
+
+export interface AdminMatchPlayer {
+  id: string;
+  pseudo: string;
+  avatarUrl: string | null;
+}
+
+export interface AdminMatchRow {
+  id: string;
+  game: string;
+  status: 'finished' | 'cancelled';
+  scoreP1: number;
+  scoreP2: number;
+  winnerId: string | null;
+  player1: AdminMatchPlayer | null;
+  player2: AdminMatchPlayer | null;
+  finishedAt: string | null;
+}
+
 // ─ Blackjack rooms (multi-joueurs) ──────────────────────────────────────
 export interface BJCard { rank?: string; suit?: string; hidden?: boolean }
 export type BJHandStatus = 'playing' | 'standing' | 'busted' | 'blackjack';
