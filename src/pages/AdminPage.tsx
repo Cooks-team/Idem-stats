@@ -1074,6 +1074,10 @@ const ADMIN_CSS = `
   font-family: var(--font-display); font-weight: 800; font-size: 22px;
   margin: 0 0 4px;
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  /* Pareil que .admin-user-card-pseudo : sans align-content explicite,
+     les lignes wrappées (cas pseudo long + pill ADMIN) s'étirent à la
+     hauteur disponible et la pill devient une barre verticale géante. */
+  align-content: flex-start;
 }
 .admin-drawer-sub { font-size: 12px; color: var(--muted); }
 .admin-drawer-close {
