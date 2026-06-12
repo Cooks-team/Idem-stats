@@ -983,7 +983,7 @@ const ADMIN_CSS = `
   color: var(--text);
   display: flex; align-items: center; gap: 6px;
   flex-wrap: wrap;
-  /* CRITIQUE : sans align-content explicite, le default est `stretch`.
+  /* CRITIQUE : sans align-content explicite, le default est stretch.
      Quand le pseudo + la pill admin wrap sur 2 lignes ET que le parent
      leak de la hauteur, la 2e ligne (qui contient la pill) prenait
      toute la hauteur disponible — la pill apparaissait comme une
