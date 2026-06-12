@@ -72,7 +72,10 @@ export function MatchDetailPage() {
       const meta = (m.metadata ?? {}) as { mode?: string };
       const isRemoteShifumi = m.game === 'shifumi' && meta.mode === 'remote';
       const modalDelay = isRemoteShifumi ? 1_500 : 0;
-      const hideDelay  = isRemoteShifumi ? 4_000 : 2_500; // total = délai + 2.5s d'affichage
+      // 2620ms = 2400ms d'affichage + 220ms d'anim de sortie (cf. MatchResultModal).
+      // Avant on naviguait à 2500ms, ce qui coupait l'anim de sortie et donnait
+      // l'impression d'un saut/blink sur mobile.
+      const hideDelay  = isRemoteShifumi ? 4_120 : 2_620;
 
       const showT = window.setTimeout(() => setShowResultModal(true), modalDelay);
 

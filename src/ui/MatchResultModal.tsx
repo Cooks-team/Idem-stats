@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { Match, MatchRewards } from '../api/types';
 
 // Modal affiché brièvement à la fin d'un match avant le redirect classement.
@@ -14,18 +14,26 @@ export function MatchResultModal({ match, myUserId, onClose }: {
   onClose?: () => void;
 }) {
   const rewards = (match.metadata as { rewards?: MatchRewards } | null)?.rewards;
-  const [visible, setVisible] = useState(true);
+  const [phase, setPhase] = useState<'enter' | 'exit'>('enter');
+  const [mounted, setMounted] = useState(true);
+  // Garde sur le timer pour ne pas le redéclencher au re-render. La modal est
+  // affichée 2.4s puis enchaîne sur 220ms d'animation de sortie avant unmount —
+  // sans cette sortie animée, on tombait sur un noir net entre la modal et
+  // le redirect classement, particulièrement visible sur mobile.
+  const armed = useRef(false);
 
   useEffect(() => {
-    if (!visible) return;
-    const t = window.setTimeout(() => {
-      setVisible(false);
+    if (armed.current || !rewards) return;
+    armed.current = true;
+    const exit = window.setTimeout(() => setPhase('exit'), 2400);
+    const unmount = window.setTimeout(() => {
+      setMounted(false);
       onClose?.();
-    }, 2400);
-    return () => clearTimeout(t);
-  }, [visible, onClose]);
+    }, 2620);
+    return () => { clearTimeout(exit); clearTimeout(unmount); };
+  }, [rewards, onClose]);
 
-  if (!rewards || !visible) return null;
+  if (!rewards || !mounted) return null;
 
   const iAmP1 = match.player1Id === myUserId;
   const iAmP2 = match.player2Id === myUserId;
@@ -47,16 +55,25 @@ export function MatchResultModal({ match, myUserId, onClose }: {
     <div style={{
       position: 'fixed', inset: 0, zIndex: 200,
       display: 'flex', alignItems: 'center', justifyContent: 'center',
-      background: 'rgba(0,0,0,0.65)', backdropFilter: 'blur(4px)',
-      animation: 'idemResultBgIn 0.25s ease-out both',
+      // Background plus léger qu'avant + pas de backdrop-filter pour éviter le
+      // "tout noir" observé sur certains navigateurs mobiles : Safari iOS rend
+      // mal `backdrop-filter: blur` quand la modal est dans un sous-arbre avec
+      // sticky/transform, et résultat = overlay 100% opaque noir.
+      background: phase === 'exit' ? 'rgba(0,0,0,0)' : 'rgba(0,0,0,0.45)',
+      transition: 'background 220ms ease-out',
+      // Padding pour que la carte ne touche pas le bord de l'écran sur petit
+      // viewport (avant : carte 280-380px collée aux bords sur 360px).
+      padding: 20,
     }}>
       <div style={{
         background: 'var(--surface)',
         border: `3px solid ${cfg.color}`,
         borderRadius: 20, padding: '28px 36px',
-        textAlign: 'center', minWidth: 280, maxWidth: 380,
+        textAlign: 'center', minWidth: 0, maxWidth: 380, width: '100%',
         boxShadow: `0 16px 60px rgba(0,0,0,0.6), 0 0 60px color-mix(in oklab, ${cfg.color} 35%, transparent)`,
-        animation: 'idemResultPopIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) both',
+        animation: phase === 'exit'
+          ? 'idemResultPopOut 0.22s ease-in both'
+          : 'idemResultPopIn 0.45s cubic-bezier(0.16, 1, 0.3, 1) both',
       }}>
         <div style={{ fontSize: 64, lineHeight: 1 }}>{cfg.emoji}</div>
         <div style={{
@@ -89,11 +106,14 @@ export function MatchResultModal({ match, myUserId, onClose }: {
       </div>
 
       <style>{`
-        @keyframes idemResultBgIn  { from { opacity: 0; } to { opacity: 1; } }
         @keyframes idemResultPopIn {
           0%   { transform: scale(0.7) translateY(20px); opacity: 0; }
           60%  { transform: scale(1.06) translateY(0); opacity: 1; }
           100% { transform: scale(1); }
+        }
+        @keyframes idemResultPopOut {
+          0%   { transform: scale(1); opacity: 1; }
+          100% { transform: scale(0.92) translateY(8px); opacity: 0; }
         }
       `}</style>
     </div>

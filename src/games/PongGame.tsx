@@ -7,6 +7,8 @@ import { absoluteAvatar } from '../api/client';
 import { DuelStart } from '../ui/DuelStart';
 import { EmoteBubble } from '../ui/EmoteBubble';
 import { EmotePicker } from '../ui/EmotePicker';
+import { MobilePaddleControls } from '../ui/MobilePaddleControls';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 // Pong classique 1v1 sur le même écran. Premier à 10 gagne.
 //   J1 (rouge, droite)  : ↑ ↓
@@ -108,6 +110,7 @@ function PongComponent({ onFinish, player1, player2, mode = 'local', matchId }: 
     trail: [],
   });
   const [score, setScore] = useState({ p1: 0, p2: 0 });
+  const isMobile = useIsMobile();
 
   const { sendInput, sendState } = useRemoteGameSync<PongInputMsg, PongStateMsg>({
     matchId: matchId ?? null,
@@ -129,6 +132,27 @@ function PongComponent({ onFinish, player1, player2, mode = 'local', matchId }: 
     },
   });
   const sentGuestRef = useRef<{ up: boolean; down: boolean }>({ up: false, down: false });
+
+  // Wrappers tactiles : convertissent un appui sur ▲/▼ en exactement le même
+  // input qu'un keydown/keyup clavier. Pour `mode === 'local'`, le touch
+  // contrôle J1 (un seul joueur tactile sur le même écran a du sens).
+  // Pour 'host'/'guest', le wrapper reproduit la logique des handlers keys.
+  const pressPaddle = (dir: 'up' | 'down', state: 'down' | 'up') => {
+    const s = stateRef.current;
+    if (mode === 'guest') {
+      const cur = sentGuestRef.current;
+      if (state === 'down') {
+        if (!cur[dir]) { cur[dir] = true; sendInput({ dir, state: 'down' }); }
+      } else {
+        if (cur[dir]) { cur[dir] = false; sendInput({ dir, state: 'up' }); }
+      }
+      return;
+    }
+    // local (J1) ou host : on bouge le paddle directement via keys.
+    const key = dir === 'up' ? 'arrowup' : 'arrowdown';
+    if (state === 'down') s.keys.add(key);
+    else                  s.keys.delete(key);
+  };
 
   const start = () => {
     stateRef.current = {
@@ -410,6 +434,15 @@ function PongComponent({ onFinish, player1, player2, mode = 'local', matchId }: 
       {phase === 'running' && (
         <div style={{ color: 'var(--muted)', fontSize: 13 }}>Premier à {WIN_SCORE} points gagne.</div>
       )}
+      {/* Pad tactile pour le téléphone — uniquement quand on joue (running) */}
+      <MobilePaddleControls
+        visible={isMobile && phase === 'running'}
+        onUpDown={() => pressPaddle('up', 'down')}
+        onUpUp={() => pressPaddle('up', 'up')}
+        onDownDown={() => pressPaddle('down', 'down')}
+        onDownUp={() => pressPaddle('down', 'up')}
+        label="Contrôles Pong"
+      />
       {phase === 'done' && <div style={{ color: 'var(--muted)' }}>Match terminé. Score envoyé…</div>}
     </div>
   );

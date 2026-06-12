@@ -4,6 +4,8 @@ import { useRemoteGameSync } from '../realtime/useRemoteGameSync';
 import { useEmotePair } from '../realtime/useEmotePair';
 import { EmoteBubble } from '../ui/EmoteBubble';
 import { EmotePicker } from '../ui/EmotePicker';
+import { MobileDPad } from '../ui/MobileDPad';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 // Babyfoot version arcade air-hockey, désormais multiplayer remote.
 //
@@ -214,6 +216,33 @@ function BabyfootComponent({ onFinish, player1, player2, mode = 'local', matchId
 
   // Suivi des touches déjà envoyées au host (pour éviter les keydown répétés)
   const sentGuestKeys = useRef<Set<Dir | 'boost'>>(new Set());
+  const isMobile = useIsMobile();
+
+  // Mêmes wrappers que pour Pong, mais étendus aux 4 directions + boost.
+  // En local/host, on stocke directement la touche brute dans keysHost ; en
+  // guest, on envoie un input canonique au host. La touche brute "arrowup"
+  // suffit côté host puisque la game-loop relit keysHost via isHostKey().
+  const pressDir = (dir: Dir | 'boost', state: 'down' | 'up') => {
+    if (mode === 'guest') {
+      const set = sentGuestKeys.current;
+      if (state === 'down') {
+        if (!set.has(dir)) { set.add(dir); sendInput({ dir, state: 'down' }); }
+      } else {
+        if (set.has(dir))  { set.delete(dir); sendInput({ dir, state: 'up' }); }
+      }
+      return;
+    }
+    // local ou host : on injecte la touche brute (flèches) côté J1.
+    const key = (
+      dir === 'up'    ? 'arrowup' :
+      dir === 'down'  ? 'arrowdown' :
+      dir === 'left'  ? 'arrowleft' :
+      dir === 'right' ? 'arrowright' :
+                        'shift'
+    );
+    if (state === 'down') stateRef.current.keysHost.add(key);
+    else                  stateRef.current.keysHost.delete(key);
+  };
 
   // ─ Game loop : uniquement en host ou local ────────────────────────────
   useEffect(() => {
@@ -382,6 +411,13 @@ function BabyfootComponent({ onFinish, player1, player2, mode = 'local', matchId
           <span style={{ opacity: 0.85 }}>En attente que ton adversaire lance la partie…</span>
         </div>
       )}
+      {/* D-pad tactile mobile — uniquement quand on joue */}
+      <MobileDPad
+        visible={isMobile && phase === 'running'}
+        onPress={(dir, state) => pressDir(dir, state)}
+        onBoost={(state) => pressDir('boost', state)}
+        boostLabel="⚡"
+      />
       {phase === 'running' && (
         <div style={{ color: 'var(--muted)', fontSize: 13 }}>
           Shift = boost · Premier à {WIN_GOALS} buts.
