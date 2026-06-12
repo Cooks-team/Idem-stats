@@ -45,6 +45,23 @@ function handValue(hand: Card[]): number {
   return total;
 }
 
+// Une figure qui vaut 10 strict (donc PAS l'As).
+function isTen(c: Card): boolean {
+  return c.rank === '10' || c.rank === 'J' || c.rank === 'Q' || c.rank === 'K';
+}
+
+// "Vrai" blackjack au sens casino : 21 sur exactement 2 cartes,
+// composé d'1 As + 1 figure valant 10. Important :
+// - A+A vaut 12, PAS un blackjack — l'ancien check `tenLike(d1)&&tenLike(d2)`
+//   (où tenLike incluait A) le marquait comme BJ et provoquait des push
+//   abusifs quand le joueur avait un vrai BJ.
+// - 21 obtenu après hit (ex. 5+6+10) ou après split N'EST PAS un blackjack.
+function isNaturalBlackjack(hand: Card[]): boolean {
+  if (hand.length !== 2) return false;
+  const [a, b] = hand;
+  return (a.rank === 'A' && isTen(b)) || (b.rank === 'A' && isTen(a));
+}
+
 export function BlackjackPage() {
   const { user, setUser } = useAuth();
   const nav = useNavigate();
@@ -116,12 +133,23 @@ export function BlackjackPage() {
     setTimeout(() => setDealerHand([d1, d2]), 1050);
     setTimeout(() => {
       const ph = [p1, p2];
-      const playerBJ = handValue(ph) === 21;
-      const tenLike = (c: Card) => c.rank === '10' || c.rank === 'J' || c.rank === 'Q' || c.rank === 'K' || c.rank === 'A';
-      const dealerBJ = tenLike(d1) && tenLike(d2) && (d1.rank === 'A' || d2.rank === 'A');
-      if (playerBJ) {
-        setDealerHand([d1, { ...d2, hidden: false }]);
-        finishRoundSingle([ph], [bet], [dealerBJ ? 'push' : 'blackjack'], [d1, { ...d2, hidden: false }]);
+      // Détection STRICTE : 21 sur 2 cartes avec un As + une figure-10.
+      // L'ancienne version laissait passer A+A (=12) comme dealer BJ →
+      // push faux positif quand le joueur avait un vrai blackjack.
+      const playerBJ = isNaturalBlackjack(ph);
+      const dealerBJ = isNaturalBlackjack([d1, { ...d2, hidden: false }]);
+      if (playerBJ || dealerBJ) {
+        // On découvre toujours la carte cachée pour révéler le BJ du dealer.
+        const revealed = [d1, { ...d2, hidden: false }];
+        setDealerHand(revealed);
+        // - Les deux ont BJ → push (mise rendue)
+        // - Joueur seul a BJ → paie 3:2 (blackjack)
+        // - Dealer seul a BJ → joueur perd sa mise initiale (lose)
+        const result: RoundResult =
+          playerBJ && dealerBJ ? 'push' :
+          playerBJ            ? 'blackjack' :
+                                'lose';
+        finishRoundSingle([ph], [bet], [result], revealed);
       } else {
         setPhase('player');
       }
@@ -182,20 +210,28 @@ export function BlackjackPage() {
     setCurrentHandIndex(0);
     setSplitFromAces(fromAces);
     setTotalBetCommitted(totalBetCommitted + currentBet);
-    // Règle classique : split d'As → 1 carte chacun puis auto-stand. On
-    // laisse l'utilisateur cliquer Rester pour ne pas casser l'UX, mais on
-    // empêche le hit avec une note dans le UI.
+    // Règle classique : split d'As → 1 carte chacun puis stand auto sur les
+    // deux mains. On enchaîne directement vers le dealer ; pas besoin que le
+    // user clique Rester deux fois.
+    if (fromAces) {
+      setTimeout(() => advanceOrPlayDealer([null, null], newHands, 0), 600);
+    }
   }
 
   // Avance à la main suivante OU passe au dealer si toutes les mains du joueur
-  // sont résolues (bust ou stand).
-  function advanceOrPlayDealer(currentResults: RoundResult[], currentHands: Card[][]) {
-    const nextIdx = currentHandIndex + 1;
+  // sont résolues (bust ou stand). `fromIdx` est l'index de la main qui vient
+  // d'être terminée — on ne se base PAS sur `currentHandIndex` ici parce que
+  // setCurrentHandIndex est async et un appel récursif (cas split d'As)
+  // verrait encore l'ancienne valeur, causant un saut direct au dealer en
+  // sautant la main 2.
+  function advanceOrPlayDealer(currentResults: RoundResult[], currentHands: Card[][], fromIdx: number = currentHandIndex) {
+    const nextIdx = fromIdx + 1;
     if (nextIdx < currentHands.length) {
       setCurrentHandIndex(nextIdx);
-      // Si on revient sur une main split d'as déjà servie, on la stand auto
+      // Si on revient sur une main split d'As déjà servie (2 cartes), on la
+      // stand auto en récursant avec nextIdx fixé explicitement.
       if (splitFromAces && currentHands[nextIdx].length >= 2) {
-        setTimeout(() => advanceOrPlayDealer(currentResults, currentHands), 400);
+        setTimeout(() => advanceOrPlayDealer(currentResults, currentHands, nextIdx), 400);
       }
       return;
     }

@@ -34,7 +34,8 @@ export function BreakingNewsTicker() {
       onClick={() => nav('/?tab=shame')}
       title="Voir le Wall of shame"
       style={{
-        position: 'sticky', top: 0, zIndex: 100,
+        // Position sticky retirée — le wrapper dans Shell.tsx gère le sticky
+        // pour ticker + topbar ensemble, pour qu'ils ne se chevauchent plus.
         display: 'flex', alignItems: 'center', gap: 0,
         background: 'linear-gradient(90deg, var(--loss), #8a1a0d 60%, var(--loss))',
         color: 'white', cursor: 'pointer',

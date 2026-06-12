@@ -93,7 +93,10 @@ a { color: inherit; text-decoration: none; }
 .me-button .who .sub { font-size: 11.5px; color: var(--muted); }
 
 .topbar {
-  position: sticky; top: 0; z-index: 20;
+  /* Le sticky est porté par le wrapper dans Shell.tsx (qui englobe
+     BreakingNewsTicker + topbar) pour qu'ils restent toujours empilés
+     ensemble en haut quand on scrolle. Avant, chacun avait son own
+     position:sticky;top:0 et la topbar se retrouvait sous le ticker. */
   display: flex; align-items: center; gap: 16px;
   padding: 20px 40px;
   background: color-mix(in srgb, var(--bg) 82%, transparent);

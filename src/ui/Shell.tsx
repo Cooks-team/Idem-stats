@@ -81,10 +81,14 @@ export function Shell({ title, subtitle, children, onBack, action }: {
       />
 
       <main style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-        {/* Ticker breaking-news global : sticky top, visible sur toutes les pages.
-            Se masque tout seul s'il n'y a pas de 5-0 dans la dernière heure. */}
-        <BreakingNewsTicker />
-        <header className="topbar">
+        {/* Header sticky combiné : ticker breaking-news EN HAUT puis topbar.
+            Wrapper sticky pour qu'ils restent toujours empilés ensemble quand
+            on scrolle — autrefois chacun avait son own position:sticky top:0
+            et la topbar passait sous le ticker en chevauchement.
+            Background bg pour masquer le contenu qui scrolle dessous. */}
+        <div style={{ position: 'sticky', top: 0, zIndex: 30, background: 'var(--bg)' }}>
+          <BreakingNewsTicker />
+          <header className="topbar">
           <button className="burger" onClick={() => setDrawerOpen((v) => !v)} aria-label="Menu">
             <Icon name="grid" size={20} />
           </button>
@@ -121,7 +125,8 @@ export function Shell({ title, subtitle, children, onBack, action }: {
               <Icon name="bolt" size={18} /> Nouveau match
             </button>
           )}
-        </header>
+          </header>
+        </div>
         <div className="content-scroll">
           <div className="content-inner">{children}</div>
         </div>
