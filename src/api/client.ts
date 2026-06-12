@@ -187,6 +187,10 @@ export const api = {
   blackjackHeartbeat: () => call<{ ok: boolean }>('/blackjack/rooms/heartbeat', { method: 'POST' }),
   blackjackBet: (bet: number) =>
     call<{ ok: true }>('/blackjack/rooms/bet', { method: 'POST', body: JSON.stringify({ bet }) }),
+  blackjackStart: () => call<{ ok: true }>('/blackjack/rooms/start', { method: 'POST' }),
+  blackjackNext:  () => call<{ ok: true }>('/blackjack/rooms/next',  { method: 'POST' }),
+  blackjackInsurance: (bet: number) =>
+    call<{ ok: true }>('/blackjack/rooms/insurance', { method: 'POST', body: JSON.stringify({ bet }) }),
   blackjackHit:   () => call<{ ok: true }>('/blackjack/rooms/hit',   { method: 'POST' }),
   blackjackStand: () => call<{ ok: true }>('/blackjack/rooms/stand', { method: 'POST' }),
   blackjackDouble:() => call<{ ok: true }>('/blackjack/rooms/double',{ method: 'POST' }),

@@ -61,7 +61,7 @@ export interface AdminMatchRow {
 export interface BJCard { rank?: string; suit?: string; hidden?: boolean }
 export type BJHandStatus = 'playing' | 'standing' | 'busted' | 'blackjack';
 export type BJResult = 'blackjack' | 'win' | 'push' | 'lose' | 'busted' | null;
-export type BJPhase = 'waiting' | 'betting' | 'playing' | 'dealer' | 'result';
+export type BJPhase = 'waiting' | 'betting' | 'insurance' | 'playing' | 'dealer' | 'result';
 
 export interface BJSeat {
   index: number;
@@ -70,23 +70,26 @@ export interface BJSeat {
   pseudo?: string;
   avatarUrl?: string | null;
   bet?: number;
+  insuranceBet?: number;
+  insuranceDecided?: boolean;
   hands?: BJCard[][];
   handBets?: number[];
   handStatus?: BJHandStatus[];
   activeHandIdx?: number;
   result?: BJResult;
   payout?: number;
+  insurancePayout?: number;
   isMe?: boolean;
 }
 
 export interface BlackjackRoom {
   id: string;
+  isMain?: boolean;
   phase: BJPhase;
   roundId: number;
-  bettingDeadline: number;
-  resultDeadline: number;
+  insuranceOffered?: boolean;
   maxSeats: number;
-  dealer: { hand: BJCard[]; total: number };
+  dealer: { name?: string; hand: BJCard[]; total: number };
   seats: BJSeat[];
 }
 

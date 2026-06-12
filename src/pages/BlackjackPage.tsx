@@ -6,6 +6,7 @@ import { Shell } from '../ui/Shell';
 import { Avatar } from '../ui/Avatar';
 import { blackjackEmitter } from '../realtime/blackjackEvents';
 import type { BJCard, BJSeat, BlackjackRoom } from '../api/types';
+import { FiPlay, FiRefreshCw, FiShield } from 'react-icons/fi';
 
 // Blackjack multi-joueurs : table de 6 sièges partagée. Quand on entre, on
 // est auto-assigné à une room dispo (ou une nouvelle si toutes pleines).
@@ -20,6 +21,16 @@ export function BlackjackPage() {
   const [room, setRoom] = useState<BlackjackRoom | null>(null);
   const [seatIndex, setSeatIndex] = useState<number>(-1);
   const [bet, setBet] = useState(20);
+
+  // Quand on apprend le solde initial, on cale le bet sur min(20, coins).
+  // Évite un état initial bet=20 alors que l'utilisateur n'a que 5 coins —
+  // sinon il voyait "Miser" disabled sans piger pourquoi.
+  useEffect(() => {
+    if (user && typeof user.coins === 'number') {
+      setBet((b) => Math.min(Math.max(1, b), user.coins!));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id]);
   const [joinError, setJoinError] = useState<string | null>(null);
   const [acting, setActing] = useState(false);
   // Garde si on a déjà rejoint pour éviter le double join sur StrictMode (dev).
@@ -124,37 +135,61 @@ export function BlackjackPage() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10, flexWrap: 'wrap', gap: 8 }}>
             <div style={{ color: 'var(--muted)', fontSize: 13 }}>
               Table <span style={{ fontFamily: 'monospace', color: 'var(--text)' }}>#{room.id}</span>
+              {room.isMain && <span style={{ marginLeft: 6, padding: '1px 6px', borderRadius: 4, background: 'color-mix(in oklab, var(--accent) 22%, transparent)', color: 'var(--accent)', fontSize: 10, fontWeight: 800, letterSpacing: 0.5 }}>MAIN H24</span>}
               {' · '}
               <span style={{ color: 'var(--text)' }}>{room.seats.filter((s) => !s.empty).length}/{room.maxSeats} joueurs</span>
             </div>
-            <PhaseBadge phase={room.phase} bettingDeadline={room.bettingDeadline} resultDeadline={room.resultDeadline} />
+            <PhaseBadge phase={room.phase} dealerName={room.dealer.name ?? null} />
           </div>
 
           <BlackjackRoomTable room={room} seatIndex={seatIndex} />
 
           {/* Contrôles selon la phase */}
-          <div style={{ marginTop: 18, display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ marginTop: 18, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
             {room.phase === 'betting' && mySeat && (mySeat.bet ?? 0) === 0 && (
               <BettingBar bet={bet} setBet={setBet} coins={coins} presets={presets} onDeal={doBet} canDeal={!!canBet && bet > 0 && bet <= coins && !acting} />
             )}
             {room.phase === 'betting' && mySeat && (mySeat.bet ?? 0) > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                <div style={{ color: 'var(--muted)', fontSize: 14 }}>
+                  ✅ Mise de {mySeat.bet} 🪙 placée.
+                </div>
+                <button className="btn btn-accent btn-lg" onClick={wrap(() => api.blackjackStart())} disabled={acting}>
+                  <FiPlay /> Distribuer
+                </button>
+              </div>
+            )}
+            {room.phase === 'insurance' && mySeat && (mySeat.bet ?? 0) > 0 && !mySeat.insuranceDecided && (
+              <InsuranceBar
+                maxBet={Math.floor((mySeat.bet ?? 0) / 2)}
+                coins={coins}
+                onTake={(amount) => wrap(() => api.blackjackInsurance(amount))()}
+                disabled={acting}
+              />
+            )}
+            {room.phase === 'insurance' && mySeat && mySeat.insuranceDecided && (
               <div style={{ color: 'var(--muted)', fontSize: 14 }}>
-                ✅ Mise de {mySeat.bet} 🪙 placée. En attente des autres…
+                ⏳ Tu as décidé. En attente des autres…
               </div>
             )}
             {room.phase === 'playing' && (
-              <>
+              <div style={{ display: 'flex', justifyContent: 'center', gap: 10, flexWrap: 'wrap' }}>
                 <button className="btn btn-accent btn-lg" onClick={wrap(() => api.blackjackHit())} disabled={!canHit || acting}>🃏 Tirer</button>
                 <button className="btn btn-line btn-lg" onClick={wrap(() => api.blackjackStand())} disabled={!canStand || acting}>✋ Rester</button>
                 <button className="btn btn-line btn-lg" onClick={wrap(() => api.blackjackDouble())} disabled={!canDouble || acting}>⏫ Doubler</button>
                 <button className="btn btn-line btn-lg" onClick={wrap(() => api.blackjackSplit())} disabled={!canSplit || acting}>✂️ Split</button>
-              </>
+              </div>
             )}
             {room.phase === 'dealer' && (
-              <div style={{ color: 'var(--muted)', fontSize: 14 }}>🤵 Le croupier joue…</div>
+              <div style={{ color: 'var(--muted)', fontSize: 14 }}>🤵 {room.dealer.name ?? 'Le croupier'} joue…</div>
             )}
             {room.phase === 'result' && (
-              <ResultStrip mySeat={mySeat} />
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 }}>
+                <ResultStrip mySeat={mySeat} />
+                <button className="btn btn-accent btn-lg" onClick={wrap(() => api.blackjackNext())} disabled={acting}>
+                  <FiRefreshCw /> Nouveau round
+                </button>
+              </div>
             )}
             {room.phase === 'waiting' && (
               <div style={{ color: 'var(--muted)', fontSize: 14 }}>En attente du prochain round…</div>
@@ -171,37 +206,77 @@ export function BlackjackPage() {
 }
 
 // ─ Sous-composants ─────────────────────────────────────────────────────
-function PhaseBadge({ phase, bettingDeadline, resultDeadline }: {
-  phase: string; bettingDeadline: number; resultDeadline: number;
-}) {
-  const [, force] = useState(0);
-  useEffect(() => {
-    const t = window.setInterval(() => force((n) => (n + 1) % 1000), 250);
-    return () => clearInterval(t);
-  }, []);
+function PhaseBadge({ phase, dealerName }: { phase: string; dealerName: string | null }) {
   const map: Record<string, { label: string; color: string }> = {
-    waiting:  { label: 'EN ATTENTE',  color: 'var(--muted)' },
-    betting:  { label: 'MISEZ',       color: '#FFD700' },
-    playing:  { label: 'EN JEU',      color: 'var(--accent)' },
-    dealer:   { label: 'CROUPIER',    color: '#5B8CFF' },
-    result:   { label: 'RÉSULTATS',   color: '#3DD68C' },
+    waiting:   { label: 'EN ATTENTE',  color: 'var(--muted)' },
+    betting:   { label: 'MISEZ',       color: '#FFD700' },
+    insurance: { label: 'ASSURANCE ?', color: '#FF8C42' },
+    playing:   { label: 'EN JEU',      color: 'var(--accent)' },
+    dealer:    { label: 'CROUPIER',    color: '#5B8CFF' },
+    result:    { label: 'RÉSULTATS',   color: '#3DD68C' },
   };
   const cfg = map[phase] ?? { label: phase.toUpperCase(), color: 'var(--muted)' };
-  const countdown = phase === 'betting' && bettingDeadline > 0
-    ? Math.max(0, Math.ceil((bettingDeadline - Date.now()) / 1000))
-    : phase === 'result' && resultDeadline > 0
-    ? Math.max(0, Math.ceil((resultDeadline - Date.now()) / 1000))
-    : null;
+  return (
+    <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+      {dealerName && (
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: 12, color: 'var(--muted)' }}>
+          🤵 <strong style={{ color: 'var(--text)' }}>{dealerName}</strong>
+        </span>
+      )}
+      <div style={{
+        display: 'inline-flex', alignItems: 'center', gap: 8,
+        padding: '5px 12px', borderRadius: 999,
+        background: `color-mix(in oklab, ${cfg.color} 20%, var(--surface))`,
+        border: `1px solid ${cfg.color}`,
+        color: cfg.color,
+        fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12, letterSpacing: 1,
+      }}>
+        {cfg.label}
+      </div>
+    </div>
+  );
+}
+
+function InsuranceBar({ maxBet, coins, onTake, disabled }: {
+  maxBet: number; coins: number; onTake: (amount: number) => void; disabled: boolean;
+}) {
+  const [amount, setAmount] = useState(maxBet);
+  const cappedMax = Math.min(maxBet, coins);
+  const canTake = amount > 0 && amount <= cappedMax;
   return (
     <div style={{
-      display: 'inline-flex', alignItems: 'center', gap: 8,
-      padding: '5px 12px', borderRadius: 999,
-      background: `color-mix(in oklab, ${cfg.color} 20%, var(--surface))`,
-      border: `1px solid ${cfg.color}`,
-      color: cfg.color,
-      fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 12, letterSpacing: 1,
+      display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10,
+      padding: '14px 22px', borderRadius: 14,
+      background: 'rgba(255,140,66,0.10)', border: '2px solid #FF8C42',
+      maxWidth: 460,
     }}>
-      {cfg.label}{countdown !== null && <> · {countdown}s</>}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#FF8C42', fontFamily: 'var(--font-display)', fontWeight: 800, letterSpacing: 1 }}>
+        <FiShield /> ASSURANCE PAYS 2 TO 1
+      </div>
+      <div style={{ fontSize: 12.5, color: 'var(--muted)', textAlign: 'center' }}>
+        Le croupier a un As visible. Misez jusqu'à {cappedMax} 🪙 contre son blackjack.
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <input
+          type="number"
+          min={0}
+          max={cappedMax}
+          value={amount}
+          onChange={(e) => setAmount(Math.max(0, Math.min(cappedMax, parseInt(e.target.value, 10) || 0)))}
+          style={{
+            width: 90, padding: '6px 10px', borderRadius: 8,
+            background: 'var(--surface-2)', border: '1px solid var(--line)',
+            color: 'var(--text)', fontSize: 16, fontWeight: 700, textAlign: 'center',
+          }}
+        />
+        <span style={{ fontSize: 18 }}>🪙</span>
+      </div>
+      <div style={{ display: 'flex', gap: 8 }}>
+        <button className="btn btn-line" onClick={() => onTake(0)} disabled={disabled}>Passer</button>
+        <button className="btn btn-accent" onClick={() => onTake(amount)} disabled={!canTake || disabled}>
+          Assurer {amount} 🪙
+        </button>
+      </div>
     </div>
   );
 }
@@ -268,7 +343,7 @@ function BlackjackRoomTable({ room, seatIndex }: { room: BlackjackRoom; seatInde
           fontFamily: 'Georgia, serif', fontWeight: 700,
         }}>
           <span style={{ fontSize: 18 }}>🤵</span>
-          <span>Croupier</span>
+          <span>{room.dealer.name ?? 'Croupier'}</span>
           {room.dealer.total > 0 && (
             <span style={{ marginLeft: 4, fontSize: 12, color: '#D6FF3D' }}>· {room.dealer.total}</span>
           )}
