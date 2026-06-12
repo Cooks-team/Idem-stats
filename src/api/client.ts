@@ -1,5 +1,5 @@
 // Mince wrapper fetch : ajoute Bearer si dispo, sérialise JSON, jette une ApiError typée.
-import type { AdminMatchRow, AdminUserRow, AuthResponse, BadgesResponse, BlackjackRoom, BlackjackRoundResponse, ConversationSummary, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, Message, ShifumiPick, User, WallOfShameResponse, AdminTask } from './types';
+import type { AdminMatchRow, AdminStats, AdminUserRow, AuthResponse, BadgesResponse, BlackjackRoom, BlackjackRoundResponse, ConversationSummary, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, Message, ShifumiPick, User, WallOfShameResponse, AdminTask } from './types';
 
 const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 export const API_BASE_URL = BASE;
@@ -218,14 +218,33 @@ export const api = {
     call<AdminTask>(`/admin/tasks/${id}/comments/${commentId}`, { method: 'DELETE' }),
 
   // Admin modération — users + matches
-  adminListUsers: () => call<AdminUserRow[]>('/admin/users'),
+  adminStats: () => call<AdminStats>('/admin/stats'),
+  adminListUsers: (filters?: { q?: string; banned?: boolean; role?: 'user' | 'admin' }) => {
+    const qs = new URLSearchParams();
+    if (filters?.q) qs.set('q', filters.q);
+    if (filters?.banned !== undefined) qs.set('banned', String(filters.banned));
+    if (filters?.role) qs.set('role', filters.role);
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return call<AdminUserRow[]>(`/admin/users${suffix}`);
+  },
   adminBan: (id: string, reason?: string) =>
     call<{ ok: true }>(`/admin/users/${id}/ban`, { method: 'POST', body: JSON.stringify({ reason }) }),
   adminUnban: (id: string) =>
     call<{ ok: true }>(`/admin/users/${id}/unban`, { method: 'POST' }),
-  adminResetElo: (id: string) =>
-    call<{ ok: true; deleted: number }>(`/admin/users/${id}/reset-elo`, { method: 'POST' }),
-  adminListMatches: () => call<AdminMatchRow[]>('/admin/matches'),
+  adminResetElo: (id: string, game?: string) => {
+    const suffix = game ? `?game=${encodeURIComponent(game)}` : '';
+    return call<{ ok: true; deleted: number }>(`/admin/users/${id}/reset-elo${suffix}`, { method: 'POST' });
+  },
+  adminSetRole: (id: string, role: 'user' | 'admin') =>
+    call<{ ok: true }>(`/admin/users/${id}/role`, { method: 'POST', body: JSON.stringify({ role }) }),
+  adminListMatches: (filters?: { q?: string; game?: string; status?: 'finished' | 'cancelled' }) => {
+    const qs = new URLSearchParams();
+    if (filters?.q) qs.set('q', filters.q);
+    if (filters?.game) qs.set('game', filters.game);
+    if (filters?.status) qs.set('status', filters.status);
+    const suffix = qs.toString() ? `?${qs}` : '';
+    return call<AdminMatchRow[]>(`/admin/matches${suffix}`);
+  },
   adminDeleteMatch: (id: string) =>
     call<{ ok: true }>(`/admin/matches/${id}`, { method: 'DELETE' }),
 };

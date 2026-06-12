@@ -1,10 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate } from 'react-router-dom';
+import {
+  FiUsers, FiUserX, FiShield, FiTarget, FiSearch, FiTrash2, FiRefreshCw,
+  FiKey, FiArrowUp, FiArrowDown, FiX, FiLock, FiCheckSquare, FiActivity,
+  FiSlash, FiUserCheck, FiAward,
+} from 'react-icons/fi';
 import { api, ApiError, readAdminApiKey, setAdminApiKey } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { Avatar } from '../ui/Avatar';
-import type { AdminMatchRow, AdminTask, AdminUserRow, User } from '../api/types';
+import { absoluteAvatar } from '../api/client';
+import { KNOWN_GAMES, displayGame } from '../games/registry';
+import type { AdminMatchRow, AdminStats, AdminTask, AdminUserRow, User } from '../api/types';
 
 const UNLOCK_KEY = 'podium.admin.unlocked';
 
@@ -269,110 +276,378 @@ function Board({ onLock }: { onLock: () => void }) {
     );
 }
 
-// ── Modération : Users + Matches ────────────────────────────────────────────
+// ── Modération : Stats + Joueurs + Matches ──────────────────────────────────
+type ModSubTab = 'users' | 'matches';
+
 function ModerationPanel() {
     const qc = useQueryClient();
-    const usersQ = useQuery({ queryKey: ['admin', 'users'], queryFn: () => api.adminListUsers(), refetchInterval: 5000 });
-    const matchesQ = useQuery({ queryKey: ['admin', 'matches'], queryFn: () => api.adminListMatches(), refetchInterval: 5000 });
+    const [sub, setSub] = useState<ModSubTab>('users');
+    const [userQ, setUserQ] = useState('');
+    const [userBanned, setUserBanned] = useState<'all' | 'banned' | 'active'>('all');
+    const [userRole, setUserRole] = useState<'all' | 'admin' | 'user'>('all');
+    const [matchQ, setMatchQ] = useState('');
+    const [matchGame, setMatchGame] = useState('');
+    const [drawerUserId, setDrawerUserId] = useState<string | null>(null);
+
+    const statsQ = useQuery({
+        queryKey: ['admin', 'stats'],
+        queryFn: () => api.adminStats(),
+        refetchInterval: 8000,
+    });
+
+    const usersQ = useQuery({
+        queryKey: ['admin', 'users', { q: userQ, banned: userBanned, role: userRole }],
+        queryFn: () => api.adminListUsers({
+            q: userQ || undefined,
+            banned: userBanned === 'all' ? undefined : userBanned === 'banned',
+            role: userRole === 'all' ? undefined : userRole,
+        }),
+        refetchInterval: 8000,
+    });
+
+    const matchesQ = useQuery({
+        queryKey: ['admin', 'matches', { q: matchQ, game: matchGame }],
+        queryFn: () => api.adminListMatches({
+            q: matchQ || undefined,
+            game: matchGame || undefined,
+        }),
+        refetchInterval: 8000,
+    });
+
+    const invalidateUsers = () => {
+        qc.invalidateQueries({ queryKey: ['admin', 'users'] });
+        qc.invalidateQueries({ queryKey: ['admin', 'stats'] });
+    };
+    const invalidateAll = () => {
+        invalidateUsers();
+        qc.invalidateQueries({ queryKey: ['admin', 'matches'] });
+        qc.invalidateQueries({ queryKey: ['leaderboard'] });
+    };
+
     const banMut = useMutation({
         mutationFn: (v: { id: string; reason?: string }) => api.adminBan(v.id, v.reason),
-        onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'users'] }),
+        onSuccess: invalidateUsers,
     });
     const unbanMut = useMutation({
         mutationFn: (id: string) => api.adminUnban(id),
-        onSuccess: () => qc.invalidateQueries({ queryKey: ['admin', 'users'] }),
+        onSuccess: invalidateUsers,
     });
     const resetMut = useMutation({
-        mutationFn: (id: string) => api.adminResetElo(id),
-        onSuccess: () => {
-            qc.invalidateQueries({ queryKey: ['admin', 'users'] });
-            qc.invalidateQueries({ queryKey: ['admin', 'matches'] });
-            qc.invalidateQueries({ queryKey: ['leaderboard'] });
-        },
+        mutationFn: (v: { id: string; game?: string }) => api.adminResetElo(v.id, v.game),
+        onSuccess: invalidateAll,
+    });
+    const roleMut = useMutation({
+        mutationFn: (v: { id: string; role: 'user' | 'admin' }) => api.adminSetRole(v.id, v.role),
+        onSuccess: invalidateUsers,
     });
     const delMatchMut = useMutation({
         mutationFn: (id: string) => api.adminDeleteMatch(id),
         onSuccess: () => {
             qc.invalidateQueries({ queryKey: ['admin', 'matches'] });
+            qc.invalidateQueries({ queryKey: ['admin', 'users'] });
             qc.invalidateQueries({ queryKey: ['leaderboard'] });
         },
     });
 
     const users = usersQ.data ?? [];
     const matches = matchesQ.data ?? [];
+    const stats = statsQ.data;
+    const drawerUser = users.find((u) => u.id === drawerUserId) ?? null;
+    const hasApiKey = !!readAdminApiKey();
 
     return (
         <>
-            <div className="panel admin-mod-section">
-                <div className="eyebrow"><span className="label">👤 Joueurs · {users.length}</span></div>
-                {usersQ.isLoading && !users.length && <div className="admin-mod-empty">Chargement…</div>}
-                {!usersQ.isLoading && users.length === 0 && <div className="admin-mod-empty">Aucun joueur.</div>}
-                <div className="admin-mod-rows">
-                    {users.map((u) => (
-                        <UserRow
-                            key={u.id}
-                            row={u}
-                            disabled={banMut.isPending || unbanMut.isPending || resetMut.isPending}
-                            onBan={(reason) => banMut.mutate({ id: u.id, reason })}
-                            onUnban={() => unbanMut.mutate(u.id)}
-                            onResetElo={() => resetMut.mutate(u.id)}
-                        />
-                    ))}
-                </div>
+            <StatsHeader stats={stats} />
+
+            <div className="admin-subtabs">
+                <button className={`admin-subtab ${sub === 'users' ? 'active' : ''}`} onClick={() => setSub('users')}>
+                    <FiUsers /> Joueurs
+                    <span className="admin-subtab-count">{users.length}</span>
+                </button>
+                <button className={`admin-subtab ${sub === 'matches' ? 'active' : ''}`} onClick={() => setSub('matches')}>
+                    <FiActivity /> Matchs
+                    <span className="admin-subtab-count">{matches.length}</span>
+                </button>
             </div>
 
-            <div className="panel admin-mod-section">
-                <div className="eyebrow"><span className="label">⚔️ Matchs récents · {matches.length}</span></div>
-                {matchesQ.isLoading && !matches.length && <div className="admin-mod-empty">Chargement…</div>}
-                {!matchesQ.isLoading && matches.length === 0 && <div className="admin-mod-empty">Aucun match.</div>}
-                <div className="admin-mod-rows">
-                    {matches.map((m) => (
-                        <MatchRow
-                            key={m.id}
-                            row={m}
-                            disabled={delMatchMut.isPending}
-                            onDelete={() => delMatchMut.mutate(m.id)}
-                        />
-                    ))}
-                </div>
-            </div>
+            {sub === 'users' && (
+                <>
+                    <UsersFilters
+                        q={userQ} setQ={setUserQ}
+                        banned={userBanned} setBanned={setUserBanned}
+                        role={userRole} setRole={setUserRole}
+                    />
+                    {usersQ.isLoading && !users.length && <div className="admin-mod-empty">Chargement…</div>}
+                    {!usersQ.isLoading && users.length === 0 && <div className="admin-mod-empty">Aucun joueur trouvé.</div>}
+                    <div className="admin-user-grid">
+                        {users.map((u) => (
+                            <UserCard key={u.id} row={u} onClick={() => setDrawerUserId(u.id)} />
+                        ))}
+                    </div>
+                </>
+            )}
+
+            {sub === 'matches' && (
+                <>
+                    <MatchesFilters
+                        q={matchQ} setQ={setMatchQ}
+                        game={matchGame} setGame={setMatchGame}
+                    />
+                    {matchesQ.isLoading && !matches.length && <div className="admin-mod-empty">Chargement…</div>}
+                    {!matchesQ.isLoading && matches.length === 0 && <div className="admin-mod-empty">Aucun match trouvé.</div>}
+                    <div className="admin-mod-rows">
+                        {matches.map((m) => (
+                            <MatchRow
+                                key={m.id}
+                                row={m}
+                                disabled={delMatchMut.isPending}
+                                onDelete={() => delMatchMut.mutate(m.id)}
+                            />
+                        ))}
+                    </div>
+                </>
+            )}
+
+            {drawerUser && (
+                <UserDrawer
+                    row={drawerUser}
+                    hasApiKey={hasApiKey}
+                    disabled={banMut.isPending || unbanMut.isPending || resetMut.isPending || roleMut.isPending}
+                    onClose={() => setDrawerUserId(null)}
+                    onBan={(reason) => banMut.mutate({ id: drawerUser.id, reason })}
+                    onUnban={() => unbanMut.mutate(drawerUser.id)}
+                    onResetElo={(game) => resetMut.mutate({ id: drawerUser.id, game })}
+                    onSetRole={(role) => roleMut.mutate({ id: drawerUser.id, role })}
+                />
+            )}
         </>
     );
 }
 
-function UserRow({ row, disabled, onBan, onUnban, onResetElo }: {
-    row: AdminUserRow; disabled: boolean;
-    onBan: (reason?: string) => void; onUnban: () => void; onResetElo: () => void;
+// ── Stats header ────────────────────────────────────────────────────────────
+function StatsHeader({ stats }: { stats?: AdminStats }) {
+    const cards: Array<{ label: string; value: number; icon: JSX.Element; tone: string }> = [
+        { label: 'Joueurs',  value: stats?.usersTotal ?? 0,    icon: <FiUsers />,    tone: 'var(--accent)' },
+        { label: 'Bannis',   value: stats?.usersBanned ?? 0,   icon: <FiSlash />,    tone: 'var(--loss)' },
+        { label: 'Admins',   value: stats?.usersAdmin ?? 0,    icon: <FiShield />,   tone: '#FFD700' },
+        { label: 'Matchs',   value: stats?.matchesFinished ?? 0, icon: <FiTarget />, tone: 'var(--win)' },
+    ];
+    return (
+        <div className="admin-stats">
+            {cards.map((c) => (
+                <div key={c.label} className="admin-stats-card" style={{ borderColor: c.tone }}>
+                    <div className="admin-stats-icon" style={{ color: c.tone, background: `color-mix(in oklab, ${c.tone} 18%, transparent)` }}>
+                        {c.icon}
+                    </div>
+                    <div>
+                        <div className="admin-stats-label">{c.label.toUpperCase()}</div>
+                        <div className="admin-stats-value" style={{ color: c.tone }}>{c.value}</div>
+                    </div>
+                </div>
+            ))}
+        </div>
+    );
+}
+
+// ── Filtres ────────────────────────────────────────────────────────────────
+function UsersFilters({ q, setQ, banned, setBanned, role, setRole }: {
+    q: string; setQ: (v: string) => void;
+    banned: 'all' | 'banned' | 'active'; setBanned: (v: 'all' | 'banned' | 'active') => void;
+    role: 'all' | 'admin' | 'user'; setRole: (v: 'all' | 'admin' | 'user') => void;
+}) {
+    return (
+        <div className="admin-filters">
+            <div className="admin-search">
+                <FiSearch />
+                <input
+                    placeholder="Chercher un pseudo…"
+                    value={q}
+                    onChange={(e) => setQ(e.target.value)}
+                />
+                {q && <button className="admin-search-clear" onClick={() => setQ('')}><FiX /></button>}
+            </div>
+            <div className="admin-filter-pills">
+                {(['all', 'active', 'banned'] as const).map((v) => (
+                    <button key={v} className={`chip ${banned === v ? 'active accent' : ''}`} onClick={() => setBanned(v)}>
+                        {v === 'all' ? 'Tous' : v === 'active' ? 'Actifs' : 'Bannis'}
+                    </button>
+                ))}
+                <div style={{ width: 8 }} />
+                {(['all', 'user', 'admin'] as const).map((v) => (
+                    <button key={v} className={`chip ${role === v ? 'active accent' : ''}`} onClick={() => setRole(v)}>
+                        {v === 'all' ? 'Tous rôles' : v === 'user' ? 'Joueurs' : 'Admins'}
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+function MatchesFilters({ q, setQ, game, setGame }: {
+    q: string; setQ: (v: string) => void;
+    game: string; setGame: (v: string) => void;
+}) {
+    return (
+        <div className="admin-filters">
+            <div className="admin-search">
+                <FiSearch />
+                <input placeholder="Chercher un pseudo (P1 ou P2)…" value={q} onChange={(e) => setQ(e.target.value)} />
+                {q && <button className="admin-search-clear" onClick={() => setQ('')}><FiX /></button>}
+            </div>
+            <div className="admin-filter-pills">
+                <button className={`chip ${game === '' ? 'active accent' : ''}`} onClick={() => setGame('')}>Tous jeux</button>
+                {KNOWN_GAMES.map((g) => (
+                    <button key={g.apiId} className={`chip ${game === g.apiId ? 'active accent' : ''}`} onClick={() => setGame(g.apiId)}>
+                        {g.display}
+                    </button>
+                ))}
+            </div>
+        </div>
+    );
+}
+
+// ── User card (compact) ────────────────────────────────────────────────────
+function UserCard({ row, onClick }: { row: AdminUserRow; onClick: () => void }) {
+    const sortedGames = Object.entries(row.perGame).sort((a, b) => b[1].rating - a[1].rating).slice(0, 3);
+    return (
+        <button className={`admin-user-card${row.banned ? ' banned' : ''}`} onClick={onClick}>
+            <div className="admin-user-card-head">
+                <Avatar seed={row.pseudo} size={56} ring ringColor={row.banned ? 'var(--loss)' : (row.role === 'admin' ? '#FFD700' : 'var(--accent)')} imageUrl={absoluteAvatar(row.avatarUrl)} />
+                <div className="admin-user-card-main">
+                    <div className="admin-user-card-pseudo">
+                        {row.pseudo}
+                        {row.role === 'admin' && <span className="admin-pill admin"><FiShield /> ADMIN</span>}
+                        {row.banned && <span className="admin-pill loss"><FiSlash /> BANNI</span>}
+                    </div>
+                    <div className="admin-user-card-sub">
+                        {row.matchCount} matchs · {row.coins} 🪙
+                    </div>
+                </div>
+                {row.globalElo !== null && (
+                    <div className="admin-user-card-elo">
+                        <div className="admin-user-card-elo-value">{row.globalElo}</div>
+                        <div className="admin-user-card-elo-label">ELO</div>
+                    </div>
+                )}
+            </div>
+            {sortedGames.length > 0 && (
+                <div className="admin-user-card-games">
+                    {sortedGames.map(([game, e]) => (
+                        <div key={game} className="admin-user-card-game">
+                            <span className="admin-user-card-game-name">{displayGame(game)}</span>
+                            <span className="admin-user-card-game-elo">{e.rating}</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+            {row.banReason && <div className="admin-user-card-reason">« {row.banReason} »</div>}
+        </button>
+    );
+}
+
+// ── User drawer (détail + actions) ──────────────────────────────────────────
+function UserDrawer({ row, hasApiKey, disabled, onClose, onBan, onUnban, onResetElo, onSetRole }: {
+    row: AdminUserRow; hasApiKey: boolean; disabled: boolean;
+    onClose: () => void;
+    onBan: (reason?: string) => void;
+    onUnban: () => void;
+    onResetElo: (game?: string) => void;
+    onSetRole: (role: 'user' | 'admin') => void;
 }) {
     function confirmBan() {
         const reason = window.prompt(`Bannir ${row.pseudo} ?\nRaison (optionnelle) :`);
-        if (reason === null) return; // Annulé
+        if (reason === null) return;
         onBan(reason.trim() || undefined);
     }
-    function confirmReset() {
-        if (!window.confirm(`Reset ELO de ${row.pseudo} ?\nCela supprime ses ${row.matchCount} match(s) finis — irréversible.`)) return;
+    function confirmResetAll() {
+        if (!window.confirm(`Reset ELO complet de ${row.pseudo} ?\nSupprime tous ses matchs finis — irréversible.`)) return;
         onResetElo();
     }
+    function confirmResetGame(game: string) {
+        if (!window.confirm(`Reset ELO de ${row.pseudo} sur ${displayGame(game)} ?\nSupprime ses matchs finis sur ce jeu.`)) return;
+        onResetElo(game);
+    }
+    function confirmPromote() {
+        if (!window.confirm(`Promouvoir ${row.pseudo} en admin ?`)) return;
+        onSetRole('admin');
+    }
+    function confirmDemote() {
+        if (!window.confirm(`Retirer le rôle admin à ${row.pseudo} ?`)) return;
+        onSetRole('user');
+    }
+
+    const sortedGames = Object.entries(row.perGame).sort((a, b) => b[1].rating - a[1].rating);
+
     return (
-        <div className="admin-mod-row">
-            <Avatar seed={row.pseudo} size={36} imageUrl={row.avatarUrl} />
-            <div className="admin-mod-row-main">
-                <div className="admin-mod-row-title">
-                    {row.pseudo}
-                    {row.banned && <span className="admin-mod-pill loss">BANNI</span>}
+        <div className="admin-drawer-backdrop" onClick={onClose}>
+            <div className="admin-drawer" onClick={(e) => e.stopPropagation()}>
+                <div className="admin-drawer-head">
+                    <Avatar seed={row.pseudo} size={72} ring ringColor={row.banned ? 'var(--loss)' : (row.role === 'admin' ? '#FFD700' : 'var(--accent)')} imageUrl={absoluteAvatar(row.avatarUrl)} />
+                    <div style={{ flex: 1 }}>
+                        <h2 className="admin-drawer-pseudo">
+                            {row.pseudo}
+                            {row.role === 'admin' && <span className="admin-pill admin"><FiShield /> ADMIN</span>}
+                            {row.banned && <span className="admin-pill loss"><FiSlash /> BANNI</span>}
+                        </h2>
+                        <div className="admin-drawer-sub">
+                            Inscrit le {new Date(row.createdAt).toLocaleDateString('fr-FR')} · {row.matchCount} matchs · {row.coins} 🪙
+                        </div>
+                    </div>
+                    <button className="admin-drawer-close" onClick={onClose}><FiX /></button>
                 </div>
-                <div className="admin-mod-row-sub">
-                    {row.matchCount} matchs · {row.coins} 🪙
-                    {row.banReason && <> · « {row.banReason} »</>}
+
+                {row.banReason && (
+                    <div className="admin-drawer-section">
+                        <div className="admin-drawer-section-title"><FiSlash /> Raison du ban</div>
+                        <div className="admin-drawer-reason">« {row.banReason} »</div>
+                    </div>
+                )}
+
+                <div className="admin-drawer-section">
+                    <div className="admin-drawer-section-title"><FiAward /> ELO par jeu</div>
+                    {sortedGames.length === 0 ? (
+                        <div className="admin-mod-empty">Aucun match joué.</div>
+                    ) : (
+                        <div className="admin-elo-table">
+                            {sortedGames.map(([game, e]) => (
+                                <div key={game} className="admin-elo-row">
+                                    <div className="admin-elo-game">{displayGame(game)}</div>
+                                    <div className="admin-elo-rating">{e.rating}</div>
+                                    <div className="admin-elo-games">{e.games} parties</div>
+                                    <button
+                                        className="btn btn-ghost btn-sm"
+                                        disabled={disabled}
+                                        onClick={() => confirmResetGame(game)}
+                                        title={`Reset ELO ${displayGame(game)}`}
+                                    >
+                                        <FiRefreshCw /> Reset
+                                    </button>
+                                </div>
+                            ))}
+                        </div>
+                    )}
                 </div>
-            </div>
-            <div className="admin-mod-actions">
-                {row.banned
-                  ? <button className="btn btn-line btn-sm" disabled={disabled} onClick={onUnban}>Débannir</button>
-                  : <button className="btn btn-ghost btn-sm" disabled={disabled} onClick={confirmBan}>Bannir</button>}
-                <button className="btn btn-line btn-sm" disabled={disabled || row.matchCount === 0} onClick={confirmReset}>
-                    Reset ELO
-                </button>
+
+                <div className="admin-drawer-section">
+                    <div className="admin-drawer-section-title"><FiKey /> Actions</div>
+                    <div className="admin-drawer-actions">
+                        {row.banned
+                          ? <button className="btn btn-line" disabled={disabled} onClick={onUnban}><FiUserCheck /> Débannir</button>
+                          : <button className="btn btn-loss" disabled={disabled} onClick={confirmBan}><FiUserX /> Bannir</button>}
+                        <button className="btn btn-line" disabled={disabled || row.matchCount === 0} onClick={confirmResetAll}>
+                            <FiRefreshCw /> Reset ELO global
+                        </button>
+                        {hasApiKey ? (
+                            row.role === 'admin'
+                              ? <button className="btn btn-line" disabled={disabled} onClick={confirmDemote}><FiArrowDown /> Retirer admin</button>
+                              : <button className="btn btn-accent" disabled={disabled} onClick={confirmPromote}><FiArrowUp /> Passer admin</button>
+                        ) : (
+                            <div className="admin-drawer-hint">
+                                <FiLock /> Le changement de rôle nécessite la clé API. Verrouille et entre avec la clé pour pouvoir promouvoir.
+                            </div>
+                        )}
+                    </div>
+                </div>
             </div>
         </div>
     );
@@ -385,26 +660,30 @@ function MatchRow({ row, disabled, onDelete }: {
     const p2 = row.player2?.pseudo ?? '?';
     const winner = row.winnerId === row.player1?.id ? p1 : row.winnerId === row.player2?.id ? p2 : null;
     function confirmDelete() {
-        const label = `Supprimer ${p1} vs ${p2} (${row.scoreP1}-${row.scoreP2}) ?\nL'ELO sera recalculé sans ce match.`;
-        if (!window.confirm(label)) return;
+        if (!window.confirm(`Supprimer ${p1} vs ${p2} (${row.scoreP1}-${row.scoreP2}) ?\nL'ELO sera recalculé sans ce match.`)) return;
         onDelete();
     }
     return (
         <div className="admin-mod-row">
+            <div style={{ display: 'flex', gap: 6 }}>
+                <Avatar seed={p1} size={32} imageUrl={absoluteAvatar(row.player1?.avatarUrl ?? null)} />
+                <Avatar seed={p2} size={32} imageUrl={absoluteAvatar(row.player2?.avatarUrl ?? null)} />
+            </div>
             <div className="admin-mod-row-main">
                 <div className="admin-mod-row-title">
                     {p1} <span style={{ color: 'var(--muted)' }}>vs</span> {p2}
-                    <span className="admin-mod-pill" style={{ marginLeft: 8 }}>{row.game}</span>
-                    {row.status === 'cancelled' && <span className="admin-mod-pill loss">ANNULÉ</span>}
+                    <span className="admin-pill"><FiTarget /> {displayGame(row.game)}</span>
+                    {row.status === 'cancelled' && <span className="admin-pill loss">ANNULÉ</span>}
                 </div>
                 <div className="admin-mod-row-sub">
-                    {row.scoreP1}–{row.scoreP2} {winner && <>· 🏆 {winner}</>}
+                    <span className="admin-score">{row.scoreP1}–{row.scoreP2}</span>
+                    {winner && <> · 🏆 {winner}</>}
                     {row.finishedAt && <> · {new Date(row.finishedAt).toLocaleString('fr-FR')}</>}
                 </div>
             </div>
             <div className="admin-mod-actions">
-                <button className="btn btn-ghost btn-sm" disabled={disabled} onClick={confirmDelete}>
-                    🗑 Supprimer
+                <button className="btn btn-loss btn-sm" disabled={disabled} onClick={confirmDelete}>
+                    <FiTrash2 /> Supprimer
                 </button>
             </div>
         </div>
@@ -603,26 +882,190 @@ const ADMIN_CSS = `
 /* Tabs entre Modération et Tâches admin */
 .admin-tabs { display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; }
 
-/* Sections Users / Matches */
-.admin-mod-section { padding: 16px; margin-bottom: 16px; }
-.admin-mod-empty { color: var(--muted); text-align: center; padding: 20px 0; }
-.admin-mod-rows { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; max-height: 600px; overflow-y: auto; padding-right: 4px; }
-.admin-mod-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; }
-.admin-mod-row-main { flex: 1; min-width: 0; }
-.admin-mod-row-title { font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.admin-mod-row-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
-.admin-mod-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-.admin-mod-pill {
-  display: inline-flex; align-items: center;
-  padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 800; letter-spacing: 0.5px;
+/* Stats header en bannière */
+.admin-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 22px; }
+.admin-stats-card {
+  display: flex; align-items: center; gap: 14px;
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+}
+.admin-stats-icon {
+  width: 42px; height: 42px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 22px;
+}
+.admin-stats-label { font-size: 10.5px; color: var(--muted); letter-spacing: 1.2px; font-weight: 700; }
+.admin-stats-value { font-family: var(--font-display); font-weight: 800; font-size: 28px; line-height: 1.1; margin-top: 2px; }
+
+/* Sous-tabs Joueurs / Matchs */
+.admin-subtabs { display: flex; gap: 6px; border-bottom: 1px solid var(--line); margin-bottom: 14px; }
+.admin-subtab {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 10px 16px;
+  background: transparent; border: none; border-bottom: 2px solid transparent;
+  color: var(--muted); cursor: pointer;
+  font-family: var(--font-display); font-weight: 700; font-size: 14px;
+  transition: color 0.15s, border-color 0.15s;
+}
+.admin-subtab:hover { color: var(--text); }
+.admin-subtab.active { color: var(--accent); border-bottom-color: var(--accent); }
+.admin-subtab-count {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 18px; padding: 0 6px; border-radius: 999px;
+  background: var(--surface-2); color: var(--muted);
+  font-size: 11px; font-weight: 800;
+}
+.admin-subtab.active .admin-subtab-count { background: color-mix(in oklab, var(--accent) 25%, transparent); color: var(--accent); }
+
+/* Barre de filtres */
+.admin-filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; align-items: center; }
+.admin-search {
+  position: relative; display: flex; align-items: center; gap: 8px;
+  flex: 1; min-width: 220px;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px;
+  padding: 8px 12px;
+  color: var(--muted);
+}
+.admin-search > svg { font-size: 16px; flex-shrink: 0; }
+.admin-search input {
+  flex: 1; background: transparent; border: none; outline: none;
+  color: var(--text); font-size: 14px;
+}
+.admin-search-clear { background: transparent; border: none; color: var(--muted); cursor: pointer; display: flex; }
+.admin-filter-pills { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+
+/* Grille de cartes users */
+.admin-user-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.admin-user-card {
+  text-align: left;
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 14px 16px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
+  cursor: pointer;
+  transition: border-color 0.15s, transform 0.1s;
+}
+.admin-user-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.admin-user-card.banned { border-color: color-mix(in oklab, var(--loss) 50%, var(--line)); }
+.admin-user-card-head { display: flex; align-items: center; gap: 12px; }
+.admin-user-card-main { flex: 1; min-width: 0; }
+.admin-user-card-pseudo {
+  font-family: var(--font-display); font-weight: 700; font-size: 16px;
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+}
+.admin-user-card-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
+.admin-user-card-elo { text-align: right; }
+.admin-user-card-elo-value { font-family: var(--font-display); font-weight: 800; font-size: 22px; line-height: 1; color: var(--accent); }
+.admin-user-card-elo-label { font-size: 9.5px; color: var(--muted); letter-spacing: 1px; font-weight: 800; }
+.admin-user-card-games { display: flex; flex-direction: column; gap: 4px; }
+.admin-user-card-game {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 4px 8px; background: var(--surface-2); border-radius: 6px;
+  font-size: 11.5px;
+}
+.admin-user-card-game-name { color: var(--muted); }
+.admin-user-card-game-elo { font-weight: 800; color: var(--text); font-feature-settings: 'tnum'; }
+.admin-user-card-reason {
+  font-size: 11px; color: var(--loss); font-style: italic;
+  background: color-mix(in oklab, var(--loss) 10%, transparent);
+  padding: 4px 8px; border-radius: 6px;
+}
+
+/* Pills génériques */
+.admin-pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 999px; font-size: 10px; font-weight: 800;
+  letter-spacing: 0.5px;
   background: color-mix(in oklab, var(--muted) 25%, transparent);
   color: var(--text);
-  text-transform: uppercase;
 }
-.admin-mod-pill.loss {
-  background: color-mix(in oklab, var(--loss) 25%, transparent);
+.admin-pill > svg { font-size: 11px; }
+.admin-pill.loss   { background: color-mix(in oklab, var(--loss) 22%, transparent);  color: var(--loss); }
+.admin-pill.admin  { background: color-mix(in oklab, #FFD700 22%, transparent);       color: #FFD700; }
+
+/* Sections Users / Matches (rows liste verticale pour matches) */
+.admin-mod-section { padding: 16px; margin-bottom: 16px; }
+.admin-mod-empty { color: var(--muted); text-align: center; padding: 30px 0; }
+.admin-mod-rows { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.admin-mod-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.admin-mod-row-main { flex: 1; min-width: 0; }
+.admin-mod-row-title { font-weight: 700; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.admin-mod-row-sub { color: var(--muted); font-size: 12px; margin-top: 2px; display: flex; gap: 6px; align-items: center; }
+.admin-mod-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.admin-score { font-family: var(--font-display); font-weight: 700; color: var(--text); }
+
+/* Bouton "loss" pour danger zone */
+.btn.btn-loss {
+  background: color-mix(in oklab, var(--loss) 18%, transparent);
+  border: 1px solid var(--loss);
   color: var(--loss);
 }
+.btn.btn-loss:hover { background: color-mix(in oklab, var(--loss) 30%, transparent); }
+.btn.btn-loss[disabled] { opacity: 0.5; cursor: not-allowed; }
+
+/* Drawer détail user */
+.admin-drawer-backdrop {
+  position: fixed; inset: 0; z-index: 250;
+  background: rgba(0,0,0,0.55);
+  display: flex; justify-content: flex-end;
+  animation: idemDrawerBg 0.18s ease-out both;
+}
+.admin-drawer {
+  width: 100%; max-width: 520px; height: 100%;
+  background: var(--bg); border-left: 1px solid var(--line);
+  display: flex; flex-direction: column;
+  overflow-y: auto;
+  animation: idemDrawerIn 0.22s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+@keyframes idemDrawerBg { from { opacity: 0; } to { opacity: 1; } }
+@keyframes idemDrawerIn { from { transform: translateX(40px); opacity: 0.6; } to { transform: translateX(0); opacity: 1; } }
+.admin-drawer-head {
+  display: flex; align-items: center; gap: 14px;
+  padding: 22px 22px 16px;
+  border-bottom: 1px solid var(--line);
+}
+.admin-drawer-pseudo {
+  font-family: var(--font-display); font-weight: 800; font-size: 22px;
+  margin: 0 0 4px;
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.admin-drawer-sub { font-size: 12px; color: var(--muted); }
+.admin-drawer-close {
+  background: var(--surface-2); border: 1px solid var(--line);
+  width: 36px; height: 36px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--text);
+}
+.admin-drawer-section { padding: 18px 22px; border-bottom: 1px solid var(--line); }
+.admin-drawer-section-title {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 800; letter-spacing: 1.2px;
+  color: var(--muted); text-transform: uppercase;
+  margin-bottom: 12px;
+}
+.admin-drawer-reason {
+  font-style: italic; color: var(--loss); font-size: 13px;
+  background: color-mix(in oklab, var(--loss) 10%, transparent);
+  padding: 10px 12px; border-radius: 8px;
+}
+.admin-drawer-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-drawer-hint {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: var(--muted);
+  padding: 10px 12px;
+  background: var(--surface-2); border-radius: 8px;
+  border: 1px dashed var(--line);
+}
+.admin-elo-table { display: flex; flex-direction: column; gap: 6px; }
+.admin-elo-row {
+  display: grid; grid-template-columns: 1fr auto auto auto; gap: 10px; align-items: center;
+  padding: 8px 12px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+}
+.admin-elo-game { font-weight: 700; font-size: 13.5px; }
+.admin-elo-rating { font-family: var(--font-display); font-weight: 800; color: var(--accent); }
+.admin-elo-games { font-size: 11.5px; color: var(--muted); }
 
 /* Composer */
 .admin-composer { display: flex; align-items: center; gap: 12px; padding: 12px; margin-bottom: 22px; flex-wrap: wrap; }

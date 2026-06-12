@@ -14,6 +14,8 @@ export interface BlackjackRoundResponse {
 }
 
 // ─ Admin modération ────────────────────────────────────────────────────
+export interface AdminPerGameElo { rating: number; games: number }
+
 export interface AdminUserRow {
   id: string;
   pseudo: string;
@@ -22,8 +24,19 @@ export interface AdminUserRow {
   banned: boolean;
   bannedAt: string | null;
   banReason: string | null;
+  role: 'user' | 'admin';
   createdAt: string;
   matchCount: number;
+  globalElo: number | null;
+  perGame: Record<string, AdminPerGameElo>;
+}
+
+export interface AdminStats {
+  usersTotal: number;
+  usersBanned: number;
+  usersAdmin: number;
+  matchesTotal: number;
+  matchesFinished: number;
 }
 
 export interface AdminMatchPlayer {
