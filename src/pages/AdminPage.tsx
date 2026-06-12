@@ -937,14 +937,35 @@ const ADMIN_CSS = `
 .admin-filter-pills { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 
 /* Grille de cartes users */
-.admin-user-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.admin-user-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  /* Sans cette ligne, le grid étirait les cards à la hauteur du viewport
+     car le parent (panel) prenait min-height: 100vh — résultat la pill
+     ADMIN se collait verticalement contre le bord de la card étirée et
+     donnait l'illusion d'une barre jaune sur toute la hauteur. */
+  grid-auto-rows: min-content;
+  align-items: start;
+  gap: 12px;
+}
 .admin-user-card {
+  /* Reset des styles button par défaut du navigateur — sans ça, la
+     couleur du texte = ButtonText (noir sur dark mode) → pseudos
+     illisibles. La font aussi tombait sur la system font. */
+  appearance: none;
+  -webkit-appearance: none;
+  font: inherit;
+  color: var(--text);
+
   text-align: left;
   display: flex; flex-direction: column; gap: 10px;
   padding: 14px 16px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
   cursor: pointer;
   transition: border-color 0.15s, transform 0.1s;
+  /* Borne explicite : la card ne doit jamais dépasser la hauteur de son
+     contenu, peu importe ce que fait le grid parent. */
+  height: auto;
 }
 .admin-user-card:hover { border-color: var(--accent); transform: translateY(-1px); }
 .admin-user-card.banned { border-color: color-mix(in oklab, var(--loss) 50%, var(--line)); }
@@ -952,6 +973,7 @@ const ADMIN_CSS = `
 .admin-user-card-main { flex: 1; min-width: 0; }
 .admin-user-card-pseudo {
   font-family: var(--font-display); font-weight: 700; font-size: 16px;
+  color: var(--text);
   display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
 }
 .admin-user-card-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
@@ -979,6 +1001,14 @@ const ADMIN_CSS = `
   letter-spacing: 0.5px;
   background: color-mix(in oklab, var(--muted) 25%, transparent);
   color: var(--text);
+  /* Garde-fou : flex-shrink: 0 + align-self pour ne JAMAIS s'étirer dans
+     un flex parent (cas observé : barre jaune verticale sur toute la
+     hauteur de la card quand la card prenait > pleine hauteur). */
+  flex-shrink: 0;
+  align-self: center;
+  height: auto;
+  line-height: 1.3;
+  white-space: nowrap;
 }
 .admin-pill > svg { font-size: 11px; }
 .admin-pill.loss   { background: color-mix(in oklab, var(--loss) 22%, transparent);  color: var(--loss); }
