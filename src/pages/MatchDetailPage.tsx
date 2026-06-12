@@ -65,8 +65,17 @@ export function MatchDetailPage() {
     if (!m) return;
     if (arrivedStatusRef.current === null) arrivedStatusRef.current = m.status;
     if (m.status === 'finished' && arrivedStatusRef.current !== 'finished') {
-      // Affiche le modal de gains pendant ~2.5s puis redirige
-      setShowResultModal(true);
+      // Pour shifumi remote on doit ATTENDRE la fin de l'anim "SHI-FU-MI"
+      // (1050ms d'animation + ~500ms pour lire le résultat) avant de pop
+      // le modal de gains, sinon il s'affiche par-dessus le countdown et
+      // gâche le reveal. Pour les autres jeux, modal direct.
+      const meta = (m.metadata ?? {}) as { mode?: string };
+      const isRemoteShifumi = m.game === 'shifumi' && meta.mode === 'remote';
+      const modalDelay = isRemoteShifumi ? 1_500 : 0;
+      const hideDelay  = isRemoteShifumi ? 4_000 : 2_500; // total = délai + 2.5s d'affichage
+
+      const showT = window.setTimeout(() => setShowResultModal(true), modalDelay);
+
       // Met à jour le solde de coins côté AuthContext si on a un reward
       const rewards = (m.metadata as { rewards?: import('../api/types').MatchRewards } | null)?.rewards;
       if (rewards && user) {
@@ -78,8 +87,8 @@ export function MatchDetailPage() {
       const t = window.setTimeout(() => {
         setShowResultModal(false);
         nav('/', { replace: true });
-      }, 2_500);
-      return () => clearTimeout(t);
+      }, hideDelay);
+      return () => { clearTimeout(showT); clearTimeout(t); };
     }
     if (m.status === 'cancelled' && arrivedStatusRef.current !== 'cancelled') {
       const t = window.setTimeout(() => nav('/', { replace: true }), 3_500);
@@ -421,45 +430,87 @@ function ShifumiRemotePending({ match: m }: { match: Match }) {
   });
   const [chosen, setChosen] = useState<ShifumiPick | null>(null);
 
-  // Détection d'un tie qui vient de se conclure : on affiche un flash "Égalité !"
-  // pendant 1.6 s puis on bascule sur l'UI de re-pick.
-  const [tieReveal, setTieReveal] = useState<{ round: number; mine: ShifumiPick; theirs: ShifumiPick } | null>(null);
+  // Détection d'un round qui vient de se conclure :
+  //   - Égalité : flash "Égalité !" puis re-pick (existait déjà)
+  //   - Round gagné (BO3/BO5, série pas finie) : on joue le mini-SHI-FU-MI
+  //     puis on flash "X gagne le round" avant de bascule sur le pick suivant
+  // Le bug : en BO3/BO5, un round gagné amenait directement à l'UI de pick
+  // round suivant, sans reveal de qui avait gagné le précédent.
+  type RoundReveal =
+    | { kind: 'tie'; round: number; mine: ShifumiPick; theirs: ShifumiPick }
+    | { kind: 'win'; round: number; mine: ShifumiPick; theirs: ShifumiPick; winnerPseudo: string; iWon: boolean };
+  const [roundReveal, setRoundReveal] = useState<RoundReveal | null>(null);
   const prevHistoryLen = useRef<number>(meta.history?.length ?? 0);
   useEffect(() => {
     const histLen = meta.history?.length ?? 0;
-    if (histLen > prevHistoryLen.current && meta.lastTieRound) {
-      // Un tour vient d'être ajouté avec lastTieRound → c'était une égalité
+    if (histLen > prevHistoryLen.current) {
       const last = meta.history?.[histLen - 1];
       if (last?.tie) {
-        setTieReveal({
+        // Égalité
+        setRoundReveal({
+          kind: 'tie',
           round: last.round,
           mine: isCreator ? last.creatorPick : last.opponentPick,
           theirs: isCreator ? last.opponentPick : last.creatorPick,
         });
-        const t = setTimeout(() => setTieReveal(null), 1600);
+        const t = setTimeout(() => setRoundReveal(null), 1600);
+        prevHistoryLen.current = histLen;
+        return () => clearTimeout(t);
+      } else if (last && last.winnerPseudo) {
+        // Round gagné — uniquement BO3/BO5, sinon la série est terminée
+        // et l'UI bascule sur ShifumiResult (le grand reveal du match).
+        const myPseudo = isCreator ? m.player1?.pseudo : m.player2?.pseudo;
+        setRoundReveal({
+          kind: 'win',
+          round: last.round,
+          mine: isCreator ? last.creatorPick : last.opponentPick,
+          theirs: isCreator ? last.opponentPick : last.creatorPick,
+          winnerPseudo: last.winnerPseudo,
+          iWon: last.winnerPseudo === myPseudo,
+        });
+        // Plus long que tie (2.4s) : on laisse le temps de voir qui a gagné
+        // le round avant de demander le pick suivant.
+        const t = setTimeout(() => setRoundReveal(null), 2400);
         prevHistoryLen.current = histLen;
         return () => clearTimeout(t);
       }
     }
     prevHistoryLen.current = histLen;
-  }, [meta.history, meta.lastTieRound, isCreator]);
+  }, [meta.history, isCreator, m.player1?.pseudo, m.player2?.pseudo]);
 
-  // Flash d'égalité (juste après une résolution nulle)
-  if (tieReveal) {
+  // Flash d'égalité OU de victoire de round (BO3/BO5)
+  if (roundReveal) {
+    const winColor = roundReveal.kind === 'tie' ? 'var(--accent)'
+                   : roundReveal.iWon ? 'var(--win)' : 'var(--loss)';
+    const sep = roundReveal.kind === 'tie' ? '=' : 'vs';
     return (
       <div className="panel" style={{ padding: 60, textAlign: 'center', minHeight: 320 }}>
-        <div style={{ color: 'var(--muted)', fontSize: 13 }}>Round {tieReveal.round}</div>
-        <div style={{ display: 'flex', justifyContent: 'center', gap: 24, marginTop: 18 }}>
-          <div style={{ fontSize: 96, lineHeight: 1 }}>{SHIFUMI_EMOJIS[tieReveal.mine]}</div>
-          <div style={{ fontFamily: 'var(--font-display)', fontSize: 60, color: 'var(--muted)' }}>=</div>
-          <div style={{ fontSize: 96, lineHeight: 1 }}>{SHIFUMI_EMOJIS[tieReveal.theirs]}</div>
+        <div style={{ color: 'var(--muted)', fontSize: 13 }}>
+          Round {roundReveal.round}{(meta.bestOf ?? 1) > 1 ? ` / ${meta.bestOf}` : ''}
         </div>
-        <div style={{ marginTop: 22, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 36, color: 'var(--accent)' }}>
-          ÉGALITÉ !
+        <div style={{ display: 'flex', justifyContent: 'center', gap: 24, marginTop: 18 }}>
+          <div style={{ fontSize: 96, lineHeight: 1 }}>{SHIFUMI_EMOJIS[roundReveal.mine]}</div>
+          <div style={{ fontFamily: 'var(--font-display)', fontSize: 60, color: 'var(--muted)' }}>{sep}</div>
+          <div style={{ fontSize: 96, lineHeight: 1 }}>{SHIFUMI_EMOJIS[roundReveal.theirs]}</div>
+        </div>
+        <div style={{ marginTop: 22, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 36, color: winColor }}>
+          {roundReveal.kind === 'tie'
+            ? 'ÉGALITÉ !'
+            : roundReveal.iWon ? '🏆 ROUND À TOI !' : `${roundReveal.winnerPseudo.toUpperCase()} GAGNE LE ROUND`}
         </div>
         <div style={{ color: 'var(--muted)', marginTop: 8, fontSize: 14 }}>
-          On relance — round {tieReveal.round + 1} dans une seconde…
+          {roundReveal.kind === 'tie'
+            ? `On relance — round ${roundReveal.round + 1} dans une seconde…`
+            : `Round ${roundReveal.round + 1} dans 2 secondes…`}
         </div>
+        {/* Score de la série mis à jour */}
+        {(meta.bestOf ?? 1) > 1 && (
+          <div style={{ marginTop: 16, fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 26 }}>
+            <span style={{ color: 'var(--loss)' }}>{meta.seriesP1 ?? 0}</span>
+            <span style={{ color: 'var(--muted)', margin: '0 14px' }}>—</span>
+            <span style={{ color: 'var(--accent)' }}>{meta.seriesP2 ?? 0}</span>
+          </div>
+        )}
       </div>
     );
   }
