@@ -9,7 +9,13 @@ import { InboxBell } from './InboxBell';
 import { BreakingNewsTicker } from './BreakingNewsTicker';
 import { useEvents } from '../realtime/useEvents';
 
-const ADMIN_PSEUDOS = ['Mulien', 'Canigwestre'];
+// Le lien Admin de la sidebar est gaté sur user.role === 'admin' uniquement.
+// On garde l'ancienne whitelist par pseudo comme garde-fou : si l'API ne
+// retourne pas encore le `role` (déploiement en cours, vieille version), les
+// admins historiques restent visibles. La page /admin elle-même fait le
+// vrai check côté serveur via requireAdmin — la sidebar n'est qu'un
+// raccourci d'affichage.
+const LEGACY_ADMIN_PSEUDOS = ['Mulien', 'Canigwestre'];
 
 // Shell desktop + mobile : Sidebar (drawer sur mobile) + Topbar + Content.
 export function Shell({ title, subtitle, children, onBack, action }: {
@@ -39,7 +45,8 @@ export function Shell({ title, subtitle, children, onBack, action }: {
     { to: '/messages', icon: 'chat', label: 'Messages' },
     { to: '/profile', icon: 'user', label: 'Profil' },
   ];
-  if (user && ADMIN_PSEUDOS.includes(user.pseudo)) {
+  const isAdmin = !!user && (user.role === 'admin' || LEGACY_ADMIN_PSEUDOS.includes(user.pseudo));
+  if (isAdmin) {
     items.push({ to: '/admin', icon: 'crown', label: 'Admin' });
   }
 

@@ -6,6 +6,10 @@ export interface User {
   createdAt?: string;
   // Jetons gagnés via les 1v1, dépensés au casino. Optionnel pour rétro-compat.
   coins?: number;
+  // Rôle utilisateur — 'admin' débloque le lien Admin dans la sidebar.
+  // Optionnel : si l'API ne le renvoie pas (vieille version), on retombe
+  // sur 'user' implicite côté UI. Mis à jour via la page admin.
+  role?: 'user' | 'admin';
 }
 
 export interface BlackjackRoundResponse {
