@@ -940,18 +940,12 @@ const ADMIN_CSS = `
 .admin-user-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  /* Sans cette ligne, le grid étirait les cards à la hauteur du viewport
-     car le parent (panel) prenait min-height: 100vh — résultat la pill
-     ADMIN se collait verticalement contre le bord de la card étirée et
-     donnait l'illusion d'une barre jaune sur toute la hauteur. */
-  grid-auto-rows: min-content;
-  align-items: start;
+  grid-auto-rows: max-content;   /* rangée = hauteur du contenu MAX */
+  align-items: start;            /* item aligné en haut de sa cell */
+  align-content: start;          /* toute la grille alignée en haut */
   gap: 12px;
 }
 .admin-user-card {
-  /* Reset des styles button par défaut du navigateur — sans ça, la
-     couleur du texte = ButtonText (noir sur dark mode) → pseudos
-     illisibles. La font aussi tombait sur la system font. */
   appearance: none;
   -webkit-appearance: none;
   font: inherit;
@@ -962,19 +956,40 @@ const ADMIN_CSS = `
   padding: 14px 16px;
   background: var(--surface); border: 1px solid var(--line); border-radius: 14px;
   cursor: pointer;
-  transition: border-color 0.15s, transform 0.1s;
-  /* Borne explicite : la card ne doit jamais dépasser la hauteur de son
-     contenu, peu importe ce que fait le grid parent. */
+  /* Hover passé sur OUTLINE plutôt que border-color : un outline ne
+     prend pas de place dans le layout et ne peut PAS se déformer en
+     barre verticale même si la card est mal dimensionnée. */
+  outline: 0 solid transparent;
+  outline-offset: -1px;
+  transition: outline-color 0.15s, transform 0.1s;
+  /* Contraintes dures : la card ne doit JAMAIS prendre plus que la
+     hauteur de son contenu. contain: layout isole le layout interne
+     du parent, max-height + overflow: hidden agissent en filet. */
+  contain: layout;
+  align-self: start;
   height: auto;
+  max-height: max-content;
+  overflow: hidden;
 }
-.admin-user-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+.admin-user-card:hover {
+  outline: 2px solid var(--accent);
+  transform: translateY(-1px);
+}
 .admin-user-card.banned { border-color: color-mix(in oklab, var(--loss) 50%, var(--line)); }
 .admin-user-card-head { display: flex; align-items: center; gap: 12px; }
 .admin-user-card-main { flex: 1; min-width: 0; }
 .admin-user-card-pseudo {
   font-family: var(--font-display); font-weight: 700; font-size: 16px;
   color: var(--text);
-  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  display: flex; align-items: center; gap: 6px;
+  flex-wrap: wrap;
+  /* CRITIQUE : sans align-content explicite, le default est `stretch`.
+     Quand le pseudo + la pill admin wrap sur 2 lignes ET que le parent
+     leak de la hauteur, la 2e ligne (qui contient la pill) prenait
+     toute la hauteur disponible — la pill apparaissait comme une
+     barre olive verticale géante. align-content: flex-start aligne
+     toutes les lignes wrappées en haut, sans étirement vertical. */
+  align-content: flex-start;
 }
 .admin-user-card-sub { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .admin-user-card-elo { text-align: right; }
