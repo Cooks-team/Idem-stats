@@ -90,10 +90,20 @@ export function BlackjackPage() {
   const canHit = room?.phase === 'playing' && myStatus === 'playing';
   const canStand = canHit;
   const canDouble = canHit && (mySeat?.hands?.[myActiveHand]?.length === 2);
-  const canSplit  = canHit
-    && mySeat?.hands?.length === 1
-    && mySeat.hands[0].length === 2
-    && mySeat.hands[0][0].rank === mySeat.hands[0][1].rank;
+  // Split : 2 cartes même rang OU même valeur 10 (10/J/Q/K splittables
+  // entre eux côté casino, lib serveur accepte aussi). Avant on exigeait
+  // strict same-rank, donc le bouton restait disabled sur 10+J alors
+  // que le serveur l'aurait accepté.
+  const canSplit = (() => {
+    if (!canHit || mySeat?.hands?.length !== 1) return false;
+    const h = mySeat.hands[0];
+    if (h.length !== 2) return false;
+    const a = h[0], b = h[1];
+    if (!a.rank || !b.rank) return false;
+    if (a.rank === b.rank) return true;
+    const tenLike = (r: string) => r === '10' || r === 'J' || r === 'Q' || r === 'K';
+    return tenLike(a.rank) && tenLike(b.rank);
+  })();
 
   const coins = user?.coins ?? 0;
   const presets = [5, 10, 25, 50, 100, 250].filter((p) => p <= coins);
@@ -240,8 +250,13 @@ function PhaseBadge({ phase, dealerName }: { phase: string; dealerName: string |
 function InsuranceBar({ maxBet, coins, onTake, disabled }: {
   maxBet: number; coins: number; onTake: (amount: number) => void; disabled: boolean;
 }) {
-  const [amount, setAmount] = useState(maxBet);
-  const cappedMax = Math.min(maxBet, coins);
+  // Initialise sur cappedMax (et non maxBet seul) — sinon, si on a all-in
+  // sur le bet initial, l'amount par défaut était floor(bet/2) mais on
+  // n'avait pas assez de coins pour le payer, et le bouton "Assurer"
+  // restait disabled sans explication. Maintenant on propose le maximum
+  // que le user peut effectivement payer.
+  const cappedMax = Math.max(0, Math.min(maxBet, coins));
+  const [amount, setAmount] = useState(cappedMax);
   const canTake = amount > 0 && amount <= cappedMax;
   return (
     <div style={{
