@@ -4,7 +4,7 @@ import { useRemoteGameSync } from '../realtime/useRemoteGameSync';
 import { useEmotePair } from '../realtime/useEmotePair';
 import { EmoteBubble } from '../ui/EmoteBubble';
 import { EmotePicker } from '../ui/EmotePicker';
-import { MobileDPad } from '../ui/MobileDPad';
+import { MobileJoystick } from '../ui/MobileJoystick';
 import { useIsMobile } from '../hooks/useIsMobile';
 
 // Babyfoot version arcade air-hockey, désormais multiplayer remote.
@@ -411,8 +411,10 @@ function BabyfootComponent({ onFinish, player1, player2, mode = 'local', matchId
           <span style={{ opacity: 0.85 }}>En attente que ton adversaire lance la partie…</span>
         </div>
       )}
-      {/* D-pad tactile mobile — uniquement quand on joue */}
-      <MobileDPad
+      {/* Joystick analogique tactile mobile — meilleure UX qu'un d-pad de
+          boutons séparés : on glisse le pouce pour changer de direction
+          sans relever le doigt. */}
+      <MobileJoystick
         visible={isMobile && phase === 'running'}
         onPress={(dir, state) => pressDir(dir, state)}
         onBoost={(state) => pressDir('boost', state)}

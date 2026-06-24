@@ -8,7 +8,7 @@ import { Shell } from '../ui/Shell';
 import { Field } from '../ui/Field';
 import { Icon } from '../ui/Icon';
 import { Avatar } from '../ui/Avatar';
-import { KNOWN_GAMES } from '../games/registry';
+import { KNOWN_GAMES, isGameDisabled } from '../games/registry';
 import { PseudoAutocomplete } from '../ui/PseudoAutocomplete';
 
 type Mode = 'create' | 'join';
@@ -91,13 +91,29 @@ export function NewMatchPage() {
             <div className="field-group">
               <div className="eyebrow"><span className="label">Jeu</span></div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {KNOWN_GAMES.map((g) => (
-                  <button
-                    key={g.apiId}
-                    className={`chip ${game === g.apiId ? 'active' : ''}`}
-                    onClick={() => setGame(g.apiId)}
-                  >{g.display}</button>
-                ))}
+                {KNOWN_GAMES.map((g) => {
+                  const fullyDisabled = isGameDisabled(g.apiId);
+                  return (
+                    <button
+                      key={g.apiId}
+                      className={`chip ${game === g.apiId ? 'active' : ''}`}
+                      onClick={() => {
+                        // Jeux en maintenance totale → on ne change pas la
+                        // sélection, on file sur /coming-soon (lien partagé).
+                        if (fullyDisabled) {
+                          nav(`/coming-soon?game=${encodeURIComponent(g.apiId)}`);
+                          return;
+                        }
+                        setGame(g.apiId);
+                      }}
+                      style={fullyDisabled ? { opacity: 0.5 } : undefined}
+                      title={fullyDisabled ? 'Bientôt disponible' : undefined}
+                    >
+                      {g.display}
+                      {fullyDisabled && <span style={{ marginLeft: 6, fontSize: 9.5, letterSpacing: 1, opacity: 0.8 }}>SOON</span>}
+                    </button>
+                  );
+                })}
               </div>
               {friends.length > 0 && !isShifumi && (
                 <>
@@ -155,16 +171,44 @@ export function NewMatchPage() {
                     value={opponent}
                     onChange={(v) => { setOpponent(v); setError(null); }}
                   />
-                  {opponent.trim().length > 0 && (
-                    <div style={{ display: 'flex', gap: 8 }}>
-                      <button className={`chip ${duelMode === 'local' ? 'active accent' : ''}`} onClick={() => setDuelMode('local')}>
-                        📱 Local — même appareil
-                      </button>
-                      <button className={`chip ${duelMode === 'remote' ? 'active accent' : ''}`} onClick={() => setDuelMode('remote')}>
-                        ✉️ Invitation à distance
-                      </button>
-                    </div>
-                  )}
+                  {opponent.trim().length > 0 && (() => {
+                    const localBlocked = isGameDisabled(game, 'local');
+                    const remoteBlocked = isGameDisabled(game, 'remote');
+                    return (
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        <button
+                          className={`chip ${duelMode === 'local' ? 'active accent' : ''}`}
+                          onClick={() => {
+                            if (localBlocked) {
+                              nav(`/coming-soon?game=${encodeURIComponent(game)}&mode=local`);
+                              return;
+                            }
+                            setDuelMode('local');
+                          }}
+                          style={localBlocked ? { opacity: 0.5 } : undefined}
+                          title={localBlocked ? 'Mode local indisponible pour ce jeu' : undefined}
+                        >
+                          📱 Local — même appareil
+                          {localBlocked && <span style={{ marginLeft: 6, fontSize: 9.5, letterSpacing: 1 }}>SOON</span>}
+                        </button>
+                        <button
+                          className={`chip ${duelMode === 'remote' ? 'active accent' : ''}`}
+                          onClick={() => {
+                            if (remoteBlocked) {
+                              nav(`/coming-soon?game=${encodeURIComponent(game)}&mode=remote`);
+                              return;
+                            }
+                            setDuelMode('remote');
+                          }}
+                          style={remoteBlocked ? { opacity: 0.5 } : undefined}
+                          title={remoteBlocked ? 'Mode en ligne indisponible pour ce jeu' : undefined}
+                        >
+                          ✉️ Invitation à distance
+                          {remoteBlocked && <span style={{ marginLeft: 6, fontSize: 9.5, letterSpacing: 1 }}>SOON</span>}
+                        </button>
+                      </div>
+                    );
+                  })()}
                   <div style={{ color: 'var(--muted)', fontSize: 12.5 }}>
                     {opponent.trim().length === 0
                       ? "Sans adversaire, on te donne un code à partager (utile pour Basket Random + extension)."
@@ -173,10 +217,25 @@ export function NewMatchPage() {
                         : "Invitation : l'ami reçoit le défi, doit l'accepter pour démarrer."}
                   </div>
                   {error && <div style={{ color: 'var(--loss)', fontSize: 13 }}>{error}</div>}
+                  {/* Backstop côté soumission : si la combo game+duelMode
+                      est désactivée, on bloque même si le user a contourné
+                      l'UI (URL crafted, race condition, etc). */}
+                  {isGameDisabled(game, opponent.trim() ? duelMode : undefined) && (
+                    <div style={{
+                      padding: '8px 12px', borderRadius: 8,
+                      background: 'color-mix(in oklab, var(--muted) 18%, transparent)',
+                      color: 'var(--muted)', fontSize: 12.5,
+                    }}>
+                      Cette combinaison de jeu / mode est bientôt disponible.
+                    </div>
+                  )}
                   <button
                     className="btn btn-accent btn-lg btn-full"
                     onClick={() => createMut.mutate()}
-                    disabled={createMut.isPending}
+                    disabled={
+                      createMut.isPending
+                      || isGameDisabled(game, opponent.trim() ? duelMode : undefined)
+                    }
                   >
                     {createMut.isPending ? '…' : (opponent.trim() && duelMode === 'remote' ? 'Envoyer l\'invitation' : 'Créer le match')}
                   </button>

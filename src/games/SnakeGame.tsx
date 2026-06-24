@@ -4,6 +4,8 @@ import { useRemoteGameSync } from '../realtime/useRemoteGameSync';
 import { useEmotePair } from '../realtime/useEmotePair';
 import { EmoteBubble } from '../ui/EmoteBubble';
 import { EmotePicker } from '../ui/EmotePicker';
+import { MobileDPad } from '../ui/MobileDPad';
+import { useIsMobile } from '../hooks/useIsMobile';
 
 // Snake local multi-joueurs : 2 ou 4 sur le même écran/clavier.
 // Schéma de contrôle :
@@ -123,6 +125,24 @@ function SnakeComponent({ onFinish, mode = 'local', matchId }: GameProps) {
   const [isFullscreen, setIsFullscreen] = useState(false);
   const stateRef = useRef<{ snakes: Snake[]; food: Pt }>({ snakes: initSnakes(2), food: { x: 14, y: 10 } });
   const [tick, setTick] = useState(0);
+  const isMobile = useIsMobile();
+
+  // Wrapper tactile : équivalent d'un keydown direction. Réutilise la même
+  // logique que le handler clavier — applique direct en host/local (snake 0)
+  // ou envoie au host en guest.
+  const pressDir = (dirName: DirName) => {
+    if (phase !== 'running') return;
+    const snakes = stateRef.current.snakes;
+    if (mode === 'guest') {
+      sendInput({ dir: dirName });
+      return;
+    }
+    // local + host : on pilote son propre serpent (snake[0]).
+    const snake = snakes[0];
+    if (!snake) return;
+    const dir = dirNameToVec(dirName);
+    if (!isOpposite(snake.dir, dir)) snake.nextDir = dir;
+  };
 
   // Sync remote
   const { sendInput, sendState } = useRemoteGameSync<SnakeInputMsg, SnakeStateMsg>({
@@ -411,6 +431,14 @@ function SnakeComponent({ onFinish, mode = 'local', matchId }: GameProps) {
           <br />Dernier survivant gagne. Une pomme allonge le serpent.
         </div>
       )}
+
+      {/* DPad tactile mobile — uniquement quand on joue. Pilote J1 (snake 0)
+          en local/host ou émet vers le host en guest. Pas de boost. */}
+      <MobileDPad
+        visible={isMobile && phase === 'running'}
+        onPress={(dir, state) => { if (state === 'down') pressDir(dir); }}
+      />
+
       {phase === 'done' && (
         <div style={{ color: 'var(--muted)' }}>Partie terminée. Score envoyé…</div>
       )}

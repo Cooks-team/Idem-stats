@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Shell } from '../ui/Shell';
@@ -8,6 +8,7 @@ import { absoluteAvatar, api } from '../api/client';
 import type { Match } from '../api/types';
 import { moduleById } from '../games/GameModule';
 import { reportScore } from '../games/reportScore';
+import { isGameDisabled } from '../games/registry';
 import { useAuth } from '../auth/AuthContext';
 import { MatchResultModal } from '../ui/MatchResultModal';
 import { PseudoAutocomplete } from '../ui/PseudoAutocomplete';
@@ -21,6 +22,15 @@ export function GamePlayPage() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const mod = moduleById(gameId);
+
+  // Gate maintenance : un user qui taperait /games/chess directement dans
+  // l'URL est redirigé sur /coming-soon. La GamesHub n'a déjà plus de
+  // lien cliquable vers ces jeux, mais on protège aussi cette route.
+  useEffect(() => {
+    if (mod && isGameDisabled(mod.apiId)) {
+      nav(`/coming-soon?game=${encodeURIComponent(mod.apiId)}`, { replace: true });
+    }
+  }, [mod, nav]);
 
   const [opponent, setOpponent] = useState('');
   const [phase, setPhase] = useState<Phase>('setup');

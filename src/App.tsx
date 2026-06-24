@@ -15,6 +15,7 @@ import { BlackjackPage } from './pages/BlackjackPage';
 import { MessagesPage } from './pages/MessagesPage';
 import { AdminPage } from './pages/AdminPage';
 import { RanksPage } from './pages/RanksPage';
+import { ComingSoonPage } from './pages/ComingSoonPage';
 
 export function App() {
   return (
@@ -37,6 +38,7 @@ export function App() {
       <Route path="/blackjack" element={<RequireAuth><BlackjackPage /></RequireAuth>} />
       <Route path="/admin" element={<AdminPage />} />
       <Route path="/ranks" element={<RequireAuth><RanksPage /></RequireAuth>} />
+      <Route path="/coming-soon" element={<RequireAuth><ComingSoonPage /></RequireAuth>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
