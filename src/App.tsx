@@ -14,6 +14,7 @@ import { JoinByCodePage } from './pages/JoinByCodePage';
 import { BlackjackPage } from './pages/BlackjackPage';
 import { MessagesPage } from './pages/MessagesPage';
 import { AdminPage } from './pages/AdminPage';
+import { RanksPage } from './pages/RanksPage';
 
 export function App() {
   return (
@@ -35,6 +36,7 @@ export function App() {
       <Route path="/join/:code" element={<RequireAuth><JoinByCodePage /></RequireAuth>} />
       <Route path="/blackjack" element={<RequireAuth><BlackjackPage /></RequireAuth>} />
       <Route path="/admin" element={<AdminPage />} />
+      <Route path="/ranks" element={<RequireAuth><RanksPage /></RequireAuth>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );

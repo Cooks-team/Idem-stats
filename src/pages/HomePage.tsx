@@ -266,10 +266,18 @@ function LeaderboardView({ entries, isLoading, filter, setFilter, user, myIndex,
                   </span>
                 </div>
               </div>
-              <div style={{ textAlign: 'right' }}>
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); nav('/ranks'); }}
+                title="Voir le barème des ranks"
+                style={{
+                  textAlign: 'right', background: 'transparent', border: 'none',
+                  cursor: 'pointer', color: 'inherit', padding: 0,
+                }}
+              >
                 <div className="tabular" style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 28, color: entries[myIndex].rank.color }}>{entries[myIndex].elo}</div>
                 <div style={{ fontSize: 10.5, color: 'var(--muted)', letterSpacing: 0.5 }}>ELO</div>
-              </div>
+              </button>
             </div>
           )}
 
@@ -353,6 +361,7 @@ function FriendCard({ row, onShifumi }: { row: FriendshipRow; onShifumi: (pseudo
 }
 
 function RankRow({ rank, entry, onClick }: { rank: number; entry: LeaderboardEntry; onClick?: () => void }) {
+  const nav = useNavigate();
   return (
     <div
       onClick={onClick}
@@ -370,12 +379,20 @@ function RankRow({ rank, entry, onClick }: { rank: number; entry: LeaderboardEnt
           <span style={{ fontSize: 12.5, color: 'var(--muted)' }}>· {entry.wins}V {entry.losses}D</span>
         </div>
       </div>
-      <div style={{ textAlign: 'right' }}>
+      <button
+        type="button"
+        onClick={(e) => { e.stopPropagation(); nav('/ranks'); }}
+        title="Voir le barème des ranks"
+        style={{
+          textAlign: 'right', background: 'transparent', border: 'none',
+          cursor: 'pointer', color: 'inherit', padding: 0,
+        }}
+      >
         <div className="tabular" style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 22, color: entry.rank.color, lineHeight: 1 }}>
           {entry.elo}
         </div>
         <div style={{ fontSize: 10.5, color: 'var(--muted)', letterSpacing: 0.5 }}>ELO</div>
-      </div>
+      </button>
     </div>
   );
 }

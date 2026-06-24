@@ -235,6 +235,16 @@ export interface WallOfShameResponse {
   totalEvents: number;
 }
 
+/** Item de la liste publique des tiers (GET /leaderboard/tiers) — sert
+ *  à la page d'explication des ranks. `max` = null pour le tier final. */
+export interface EloTier {
+  name: string;
+  color: string;
+  emoji: string;
+  min: number;
+  max: number | null;
+}
+
 export interface RankTier {
   name: string;
   color: string;

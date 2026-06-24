@@ -1,5 +1,5 @@
 // Mince wrapper fetch : ajoute Bearer si dispo, sérialise JSON, jette une ApiError typée.
-import type { AdminMatchRow, AdminStats, AdminUserRow, AuthResponse, BadgesResponse, BlackjackRoom, BlackjackRoundResponse, ConversationSummary, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, Message, ShifumiPick, User, WallOfShameResponse, AdminTask } from './types';
+import type { AdminMatchRow, AdminStats, AdminUserRow, AuthResponse, BadgesResponse, BlackjackRoom, BlackjackRoundResponse, ConversationSummary, EloTier, FriendsResponse, FriendshipRow, InboxResponse, LeaderboardEntry, Match, MatchSource, Message, ShifumiPick, User, WallOfShameResponse, AdminTask } from './types';
 
 const BASE = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000').replace(/\/$/, '');
 export const API_BASE_URL = BASE;
@@ -175,6 +175,10 @@ export const api = {
 
   // Wall of shame : latest 5-0 + ranking des joueurs qui en ont pris le plus
   wallOfShame: () => call<WallOfShameResponse>('/wall-of-shame'),
+
+  // Barème ELO publié par le serveur — single source of truth pour la
+  // page d'explication des ranks (RanksPage).
+  eloTiers: () => call<{ initialElo: number; tiers: EloTier[] }>('/leaderboard/tiers'),
 
   // Blackjack — applique le delta de coins après une manche (friend-trust).
   blackjackRound: (bet: number, payout: number, meta?: unknown) =>

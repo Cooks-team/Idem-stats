@@ -1,3 +1,4 @@
+import { useNavigate } from 'react-router-dom';
 import type { LeaderboardEntry } from '../api/types';
 import { Avatar } from './Avatar';
 import { Icon } from './Icon';
@@ -15,6 +16,7 @@ export function Podium({ top3, onPlayerClick }: {
   top3: LeaderboardEntry[];
   onPlayerClick?: (pseudo: string) => void;
 }) {
+  const nav = useNavigate();
   if (top3.length === 0) {
     return <div style={{ color: 'var(--muted)', textAlign: 'center', padding: 20 }}>Pas encore de joueur classé.</div>;
   }
@@ -58,15 +60,24 @@ export function Podium({ top3, onPlayerClick }: {
               <Avatar seed={entry.user.pseudo} size={isWinner ? 84 : 70} ring ringColor={tint} imageUrl={absoluteAvatar(entry.user.avatarUrl)} />
             </div>
             <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--text)' }}>{entry.user.pseudo}</div>
-            {/* ELO en gros, couleur du tier — c'est la stat principale */}
-            <div className="tabular" style={{
-              fontFamily: 'var(--font-display)', fontWeight: 700,
-              fontSize: isWinner ? 32 : 26,
-              color: entry.rank?.color ?? tint, lineHeight: 1, marginTop: 2,
-            }}>
+            {/* ELO en gros, couleur du tier — c'est la stat principale.
+                Click → page d'explication des ranks (et stopPropagation
+                pour ne pas déclencher le onPlayerClick du parent). */}
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); nav('/ranks'); }}
+              title="Voir le barème des ranks"
+              className="tabular"
+              style={{
+                background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+                fontFamily: 'var(--font-display)', fontWeight: 700,
+                fontSize: isWinner ? 32 : 26,
+                color: entry.rank?.color ?? tint, lineHeight: 1, marginTop: 2,
+              }}
+            >
               {entry.elo}
               <span style={{ fontSize: 11, color: 'var(--muted)', marginLeft: 4, fontWeight: 500 }}>ELO</span>
-            </div>
+            </button>
             {/* Pill du tier */}
             {entry.rank && (
               <div style={{ marginTop: 6 }}>

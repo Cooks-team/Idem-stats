@@ -58,9 +58,17 @@ export function ProfilePage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginTop: 8 }}>
             {entry?.rank && <RankBadge rank={entry.rank} />}
             {entry && (
-              <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 18, color: entry.rank.color }}>
+              <button
+                type="button"
+                onClick={() => nav('/ranks')}
+                title="Voir le barème des ranks"
+                style={{
+                  background: 'transparent', border: 'none', cursor: 'pointer', padding: 0,
+                  fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 18, color: entry.rank.color,
+                }}
+              >
                 {entry.elo} <span style={{ fontSize: 12, color: 'var(--muted)' }}>ELO</span>
-              </span>
+              </button>
             )}
             <span style={{ color: 'var(--muted)', fontSize: 13 }}>
               · {rank >= 0 ? `Rang ${rank + 1} / ${entries.length}` : 'Pas encore classé'}
